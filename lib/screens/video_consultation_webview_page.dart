@@ -1887,20 +1887,7 @@ class _VideoConsultationWebViewPageState
       debugPrint(
         '📋 PrescriptionPoll: appointment API is returning 500 even after fallbacks',
       );
-      if (!_prescriptionServerErrorShown && mounted) {
-        _prescriptionServerErrorShown = true;
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(
-              'Prescription load nahi ho rahi. Server par 500 error aa rahi hai. Kripya thodi der baad refresh karein.',
-              style: GoogleFonts.inter(fontSize: 12.5),
-            ),
-            behavior: SnackBarBehavior.floating,
-            backgroundColor: const Color(0xFF1F2937),
-            duration: const Duration(seconds: 4),
-          ),
-        );
-      }
+      _prescriptionServerErrorShown = true;
       return;
     }
 
