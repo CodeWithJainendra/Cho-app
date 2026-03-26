@@ -555,40 +555,60 @@ class _DoctorDetailPageState extends State<_DoctorDetailPage> {
               child: CircularProgressIndicator(color: AppColors.primary))
           : CustomScrollView(
               slivers: [
-                // ── Header ─────────────────────────────
                 SliverAppBar(
                   pinned: true,
-                  expandedHeight: 200,
+                  expandedHeight: 210,
                   backgroundColor: AppColors.primary,
                   foregroundColor: Colors.white,
                   flexibleSpace: FlexibleSpaceBar(
                     background: Container(
-                      decoration: const BoxDecoration(
+                      decoration: BoxDecoration(
                         gradient: LinearGradient(
-                          colors: [Color(0xFF1565C0), Color(0xFF0D47A1)],
+                          colors: [
+                            AppColors.primary,
+                            const Color(0xFF1E56AF),
+                            const Color(0xFF173D84),
+                          ],
                           begin: Alignment.topLeft,
                           end: Alignment.bottomRight,
                         ),
+                        boxShadow: [
+                          BoxShadow(
+                            color:
+                                const Color(0xFF12326A).withValues(alpha: 0.18),
+                            blurRadius: 24,
+                            offset: const Offset(0, 10),
+                          ),
+                        ],
                       ),
                       child: SafeArea(
                         child: Padding(
-                          padding: const EdgeInsets.fromLTRB(20, 16, 20, 20),
+                          padding: const EdgeInsets.fromLTRB(18, 16, 18, 18),
                           child: Column(
                             mainAxisAlignment: MainAxisAlignment.end,
                             children: [
                               Row(
+                                crossAxisAlignment: CrossAxisAlignment.end,
                                 children: [
-                                  // Avatar
                                   Container(
-                                    width: 60,
-                                    height: 60,
+                                    width: 62,
+                                    height: 62,
                                     decoration: BoxDecoration(
                                       color:
-                                          Colors.white.withValues(alpha: 0.15),
+                                          Colors.white.withValues(alpha: 0.12),
                                       borderRadius: BorderRadius.circular(18),
                                       border: Border.all(
-                                          color: Colors.white
-                                              .withValues(alpha: 0.2)),
+                                        color: Colors.white
+                                            .withValues(alpha: 0.14),
+                                      ),
+                                      boxShadow: [
+                                        BoxShadow(
+                                          color: Colors.black
+                                              .withValues(alpha: 0.12),
+                                          blurRadius: 16,
+                                          offset: const Offset(0, 8),
+                                        ),
+                                      ],
                                     ),
                                     child: Center(
                                       child: Text(
@@ -600,7 +620,7 @@ class _DoctorDetailPageState extends State<_DoctorDetailPage> {
                                       ),
                                     ),
                                   ),
-                                  const SizedBox(width: 14),
+                                  const SizedBox(width: 12),
                                   Expanded(
                                     child: Column(
                                       crossAxisAlignment:
@@ -609,7 +629,7 @@ class _DoctorDetailPageState extends State<_DoctorDetailPage> {
                                         Text(
                                           doc.name,
                                           style: GoogleFonts.poppins(
-                                              fontSize: 16,
+                                              fontSize: 18,
                                               fontWeight: FontWeight.w700,
                                               color: Colors.white),
                                         ),
@@ -617,14 +637,17 @@ class _DoctorDetailPageState extends State<_DoctorDetailPage> {
                                           const SizedBox(height: 2),
                                           Text(
                                             doc.specialization!,
-                                            style: GoogleFonts.inter(
+                                            style: GoogleFonts.dmSans(
                                                 fontSize: 12,
+                                                fontWeight: FontWeight.w500,
                                                 color: Colors.white
-                                                    .withValues(alpha: 0.8)),
+                                                    .withValues(alpha: 0.82)),
                                           ),
                                         ],
-                                        const SizedBox(height: 6),
-                                        Row(
+                                        const SizedBox(height: 8),
+                                        Wrap(
+                                          spacing: 6,
+                                          runSpacing: 6,
                                           children: [
                                             _headerChip(
                                                 doc.isOnline
@@ -633,10 +656,8 @@ class _DoctorDetailPageState extends State<_DoctorDetailPage> {
                                                         ? 'Busy'
                                                         : 'Offline',
                                                 _dotColorStatic(doc.status)),
-                                            if (doc.city != null) ...[
-                                              const SizedBox(width: 6),
+                                            if (doc.city != null)
                                               _headerChip(doc.city!, null),
-                                            ],
                                           ],
                                         ),
                                       ],
@@ -651,46 +672,86 @@ class _DoctorDetailPageState extends State<_DoctorDetailPage> {
                     ),
                   ),
                 ),
-
-                // ── Body ──────────────────────────────
                 SliverToBoxAdapter(
                   child: Padding(
-                    padding: const EdgeInsets.all(14),
+                    padding: const EdgeInsets.fromLTRB(14, 12, 14, 22),
                     child: Column(
                       children: [
-                        // ─ Info Card ───────────────────
                         _card(
-                          icon: Icons.person_outline_rounded,
+                          icon: Icons.badge_outlined,
                           title: 'Doctor Information',
-                          child: Column(
-                            children: [
-                              if (doc.phone != null)
-                                _infoRow(
-                                    Icons.phone_outlined, 'Phone', doc.phone!),
-                              if (doc.email != null)
-                                _infoRow(
-                                    Icons.email_outlined, 'Email', doc.email!),
-                              if (doc.hprId != null)
-                                _infoRow(
-                                    Icons.badge_outlined, 'HPR ID', doc.hprId!),
-                              if (doc.gender != null)
-                                _infoRow(
-                                    Icons.wc_outlined,
-                                    'Gender',
-                                    doc.gender!.substring(0, 1).toUpperCase() +
-                                        doc.gender!.substring(1)),
-                              if (doc.qualification != null)
-                                _infoRow(Icons.school_outlined, 'Qualification',
-                                    doc.qualification!),
-                              if (doc.city != null)
-                                _infoRow(Icons.location_on_outlined, 'City',
-                                    doc.city!),
-                            ],
+                          child: LayoutBuilder(
+                            builder: (context, constraints) {
+                              final width = constraints.maxWidth;
+                              final itemWidth =
+                                  width > 620 ? (width - 10) / 2 : width;
+                              return Wrap(
+                                spacing: 8,
+                                runSpacing: 8,
+                                children: [
+                                  if (doc.phone != null)
+                                    SizedBox(
+                                      width: itemWidth,
+                                      child: _infoTile(
+                                        icon: Icons.phone_outlined,
+                                        label: 'Phone',
+                                        value: doc.phone!,
+                                      ),
+                                    ),
+                                  if (doc.email != null)
+                                    SizedBox(
+                                      width: itemWidth,
+                                      child: _infoTile(
+                                        icon: Icons.email_outlined,
+                                        label: 'Email',
+                                        value: doc.email!,
+                                      ),
+                                    ),
+                                  if (doc.gender != null)
+                                    SizedBox(
+                                      width: itemWidth,
+                                      child: _infoTile(
+                                        icon: Icons.wc_outlined,
+                                        label: 'Gender',
+                                        value: doc.gender!
+                                                .substring(0, 1)
+                                                .toUpperCase() +
+                                            doc.gender!.substring(1),
+                                      ),
+                                    ),
+                                  if (doc.city != null)
+                                    SizedBox(
+                                      width: itemWidth,
+                                      child: _infoTile(
+                                        icon: Icons.location_on_outlined,
+                                        label: 'City',
+                                        value: doc.city!,
+                                      ),
+                                    ),
+                                  if (doc.hprId != null)
+                                    SizedBox(
+                                      width: itemWidth,
+                                      child: _infoTile(
+                                        icon: Icons.badge_outlined,
+                                        label: 'HPR ID',
+                                        value: doc.hprId!,
+                                      ),
+                                    ),
+                                  if (doc.qualification != null)
+                                    SizedBox(
+                                      width: itemWidth,
+                                      child: _infoTile(
+                                        icon: Icons.school_outlined,
+                                        label: 'Qualification',
+                                        value: doc.qualification!,
+                                      ),
+                                    ),
+                                ],
+                              );
+                            },
                           ),
                         ),
                         const SizedBox(height: 10),
-
-                        // ─ Telemedicine Service ────────
                         _card(
                           icon: Icons.videocam_outlined,
                           title: 'Telemedicine Service',
@@ -698,47 +759,47 @@ class _DoctorDetailPageState extends State<_DoctorDetailPage> {
                             width: double.infinity,
                             padding: const EdgeInsets.all(12),
                             decoration: BoxDecoration(
-                              color: const Color(0xFFF0FFF4),
-                              borderRadius: BorderRadius.circular(10),
+                              color: const Color(0xFFF4FBF7),
+                              borderRadius: BorderRadius.circular(14),
                               border:
-                                  Border.all(color: const Color(0xFFC8E6C9)),
+                                  Border.all(color: const Color(0xFFD7EFD9)),
                             ),
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
+                            child: Row(
                               children: [
-                                Row(
-                                  children: [
-                                    const Icon(Icons.videocam_rounded,
-                                        size: 15, color: Color(0xFF2E7D32)),
-                                    const SizedBox(width: 6),
-                                    Text('Video Consultation',
-                                        style: GoogleFonts.inter(
-                                            fontSize: 12.5,
-                                            fontWeight: FontWeight.w600,
-                                            color: const Color(0xFF2E7D32))),
-                                  ],
+                                Container(
+                                  width: 34,
+                                  height: 34,
+                                  decoration: BoxDecoration(
+                                    color: const Color(0xFFE5F6EA),
+                                    borderRadius: BorderRadius.circular(10),
+                                  ),
+                                  child: const Icon(
+                                    Icons.videocam_rounded,
+                                    size: 16,
+                                    color: Color(0xFF2E7D32),
+                                  ),
                                 ),
-                                const SizedBox(height: 4),
-                                Text(
-                                  'Virtual appointment with your doctor via secure video call.',
-                                  style: GoogleFonts.inter(
+                                const SizedBox(width: 10),
+                                Expanded(
+                                  child: Text(
+                                    'Video consultation available for this doctor.',
+                                    style: GoogleFonts.inter(
                                       fontSize: 11.5,
+                                      height: 1.35,
                                       color: AppColors.textSecondary,
-                                      height: 1.4),
+                                    ),
+                                  ),
                                 ),
                               ],
                             ),
                           ),
                         ),
                         const SizedBox(height: 10),
-
-                        // ─ Consultation Status ─────────
                         _card(
                           icon: Icons.medical_services_outlined,
-                          title: 'Consultation',
+                          title: 'Consultation Status',
                           child: Column(
                             children: [
-                              // Status row
                               Container(
                                 width: double.infinity,
                                 padding: const EdgeInsets.all(12),
@@ -748,13 +809,22 @@ class _DoctorDetailPageState extends State<_DoctorDetailPage> {
                                       : doc.isBusy
                                           ? const Color(0xFFFFF8E1)
                                           : const Color(0xFFF5F5F5),
-                                  borderRadius: BorderRadius.circular(10),
+                                  borderRadius: BorderRadius.circular(14),
+                                  border: Border.all(
+                                    color: doc.isOnline
+                                        ? const Color(0xFFCFE8D2)
+                                        : doc.isBusy
+                                            ? const Color(0xFFFFE0B2)
+                                            : const Color(0xFFE2E5E9),
+                                  ),
                                 ),
                                 child: Row(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
                                   children: [
                                     Container(
-                                      width: 9,
-                                      height: 9,
+                                      width: 10,
+                                      height: 10,
+                                      margin: const EdgeInsets.only(top: 3),
                                       decoration: BoxDecoration(
                                         shape: BoxShape.circle,
                                         color: _dotColorStatic(doc.status),
@@ -764,13 +834,13 @@ class _DoctorDetailPageState extends State<_DoctorDetailPage> {
                                     Expanded(
                                       child: Text(
                                         doc.isOnline
-                                            ? 'Doctor is available for consultation'
+                                            ? 'Doctor is available for consultation right now.'
                                             : doc.isBusy
-                                                ? 'Doctor is currently in consultation'
-                                                : 'Doctor is currently offline',
-                                        style: GoogleFonts.inter(
-                                          fontSize: 12,
-                                          fontWeight: FontWeight.w500,
+                                                ? 'Doctor is currently attending another consultation.'
+                                                : 'Doctor is currently offline for consultation.',
+                                        style: GoogleFonts.dmSans(
+                                          fontSize: 12.5,
+                                          fontWeight: FontWeight.w700,
                                           color: doc.isOnline
                                               ? const Color(0xFF2E7D32)
                                               : doc.isBusy
@@ -782,7 +852,6 @@ class _DoctorDetailPageState extends State<_DoctorDetailPage> {
                                   ],
                                 ),
                               ),
-
                               if (doc.isOnline) ...[
                                 const SizedBox(height: 12),
                                 if (_resolvedPatientId <= 0) ...[
@@ -792,7 +861,7 @@ class _DoctorDetailPageState extends State<_DoctorDetailPage> {
                                     margin: const EdgeInsets.only(bottom: 10),
                                     decoration: BoxDecoration(
                                       color: const Color(0xFFFFF8E1),
-                                      borderRadius: BorderRadius.circular(8),
+                                      borderRadius: BorderRadius.circular(12),
                                       border: Border.all(
                                           color: const Color(0xFFFFE082)),
                                     ),
@@ -805,7 +874,7 @@ class _DoctorDetailPageState extends State<_DoctorDetailPage> {
                                           child: Text(
                                             'Patient ID is missing for this consultation. Open telemedicine from a verified patient appointment.',
                                             style: GoogleFonts.inter(
-                                                fontSize: 11,
+                                                fontSize: 10.5,
                                                 height: 1.3,
                                                 color: const Color(0xFFF57F17)),
                                           ),
@@ -814,7 +883,6 @@ class _DoctorDetailPageState extends State<_DoctorDetailPage> {
                                     ),
                                   ),
                                 ],
-                                // Start button
                                 SizedBox(
                                   width: double.infinity,
                                   height: 46,
@@ -826,12 +894,12 @@ class _DoctorDetailPageState extends State<_DoctorDetailPage> {
                                         size: 18),
                                     label: Text(
                                       'Start Video Consultation',
-                                      style: GoogleFonts.poppins(
+                                      style: GoogleFonts.dmSans(
                                           fontSize: 13,
                                           fontWeight: FontWeight.w600),
                                     ),
                                     style: ElevatedButton.styleFrom(
-                                      backgroundColor: const Color(0xFF4CAF50),
+                                      backgroundColor: const Color(0xFF3FB24F),
                                       foregroundColor: Colors.white,
                                       elevation: 0,
                                       shape: RoundedRectangleBorder(
@@ -841,7 +909,6 @@ class _DoctorDetailPageState extends State<_DoctorDetailPage> {
                                   ),
                                 ),
                               ],
-
                               if (!doc.isOnline) ...[
                                 const SizedBox(height: 10),
                                 Container(
@@ -849,7 +916,7 @@ class _DoctorDetailPageState extends State<_DoctorDetailPage> {
                                   padding: const EdgeInsets.all(10),
                                   decoration: BoxDecoration(
                                     color: const Color(0xFFFFF8E1),
-                                    borderRadius: BorderRadius.circular(8),
+                                    borderRadius: BorderRadius.circular(12),
                                     border: Border.all(
                                         color: const Color(0xFFFFE082)),
                                   ),
@@ -864,7 +931,7 @@ class _DoctorDetailPageState extends State<_DoctorDetailPage> {
                                               ? 'Doctor is busy. Please try again shortly.'
                                               : 'Video consultation available when doctor is online.',
                                           style: GoogleFonts.inter(
-                                              fontSize: 11,
+                                              fontSize: 10.5,
                                               height: 1.3,
                                               color: const Color(0xFFF57F17)),
                                         ),
@@ -894,13 +961,13 @@ class _DoctorDetailPageState extends State<_DoctorDetailPage> {
       padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
         color: Colors.white,
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: const Color(0xFFE8ECF0)),
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: const Color(0xFFE5EAF1)),
         boxShadow: [
           BoxShadow(
-              color: Colors.black.withValues(alpha: 0.02),
-              blurRadius: 8,
-              offset: const Offset(0, 2)),
+              color: const Color(0xFF0F172A).withValues(alpha: 0.04),
+              blurRadius: 16,
+              offset: const Offset(0, 6)),
         ],
       ),
       child: Column(
@@ -908,12 +975,20 @@ class _DoctorDetailPageState extends State<_DoctorDetailPage> {
         children: [
           Row(
             children: [
-              Icon(icon, size: 16, color: AppColors.primary),
-              const SizedBox(width: 6),
+              Container(
+                width: 30,
+                height: 30,
+                decoration: BoxDecoration(
+                  color: const Color(0xFFEAF2FF),
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: Icon(icon, size: 15, color: AppColors.primary),
+              ),
+              const SizedBox(width: 8),
               Text(title,
-                  style: GoogleFonts.poppins(
-                      fontSize: 13,
-                      fontWeight: FontWeight.w600,
+                  style: GoogleFonts.dmSans(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w700,
                       color: AppColors.textPrimary)),
             ],
           ),
@@ -924,28 +999,53 @@ class _DoctorDetailPageState extends State<_DoctorDetailPage> {
     );
   }
 
-  // ── Info row ────────────────────────────────────────────
-  Widget _infoRow(IconData icon, String label, String value) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 8),
+  Widget _infoTile({
+    required IconData icon,
+    required String label,
+    required String value,
+  }) {
+    return Container(
+      padding: const EdgeInsets.all(11),
+      decoration: BoxDecoration(
+        color: const Color(0xFFF7F9FC),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: const Color(0xFFE7ECF2)),
+      ),
       child: Row(
         children: [
-          Icon(icon, size: 14, color: AppColors.textHint),
-          const SizedBox(width: 8),
-          SizedBox(
-            width: 80,
-            child: Text(label,
-                style: GoogleFonts.inter(
-                    fontSize: 11.5, color: AppColors.textHint)),
+          Container(
+            width: 30,
+            height: 30,
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(10),
+            ),
+            child: Icon(icon, size: 15, color: AppColors.primary),
           ),
+          const SizedBox(width: 8),
           Expanded(
-            child: Text(
-              value,
-              style: GoogleFonts.inter(
-                  fontSize: 12,
-                  fontWeight: FontWeight.w500,
-                  color: AppColors.textPrimary),
-              overflow: TextOverflow.ellipsis,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  label,
+                  style: GoogleFonts.inter(
+                    fontSize: 10,
+                    color: AppColors.textHint,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  value,
+                  style: GoogleFonts.dmSans(
+                    fontSize: 12.5,
+                    fontWeight: FontWeight.w700,
+                    color: AppColors.textPrimary,
+                  ),
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ],
             ),
           ),
         ],
@@ -953,27 +1053,27 @@ class _DoctorDetailPageState extends State<_DoctorDetailPage> {
     );
   }
 
-  // ── Header chip ─────────────────────────────────────────
   Widget _headerChip(String text, Color? dotColor) {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
       decoration: BoxDecoration(
-        color: Colors.white.withValues(alpha: 0.15),
-        borderRadius: BorderRadius.circular(6),
+        color: Colors.white.withValues(alpha: 0.14),
+        borderRadius: BorderRadius.circular(999),
+        border: Border.all(color: Colors.white.withValues(alpha: 0.08)),
       ),
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
           if (dotColor != null) ...[
             Container(
-                width: 6,
-                height: 6,
+                width: 7,
+                height: 7,
                 decoration:
                     BoxDecoration(shape: BoxShape.circle, color: dotColor)),
-            const SizedBox(width: 4),
+            const SizedBox(width: 5),
           ],
           Text(text,
-              style: GoogleFonts.inter(
+              style: GoogleFonts.dmSans(
                   fontSize: 10,
                   fontWeight: FontWeight.w600,
                   color: Colors.white)),
