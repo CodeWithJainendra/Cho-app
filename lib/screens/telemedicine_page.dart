@@ -108,16 +108,19 @@ class _TelemedicinePageState extends State<TelemedicinePage> {
         centerTitle: true,
         leading: IconButton(
           onPressed: () => Navigator.pop(context),
-          icon: const Icon(Icons.arrow_back_ios_new_rounded, size: 18, color: Colors.white),
+          icon: const Icon(Icons.arrow_back_ios_new_rounded,
+              size: 18, color: Colors.white),
         ),
         title: Text(
-          'Telemedicine',
-          style: GoogleFonts.poppins(fontSize: 17, fontWeight: FontWeight.w600, color: Colors.white),
+          widget.patientName != null ? 'Choose Doctor' : 'Doctors List',
+          style: GoogleFonts.poppins(
+              fontSize: 17, fontWeight: FontWeight.w600, color: Colors.white),
         ),
         actions: [
           IconButton(
             onPressed: _loadDoctors,
-            icon: const Icon(Icons.refresh_rounded, size: 20, color: Colors.white),
+            icon: const Icon(Icons.refresh_rounded,
+                size: 20, color: Colors.white),
           ),
         ],
       ),
@@ -131,12 +134,16 @@ class _TelemedicinePageState extends State<TelemedicinePage> {
               color: const Color(0xFFE3F2FD),
               child: Row(
                 children: [
-                  const Icon(Icons.person_rounded, size: 15, color: Color(0xFF1565C0)),
+                  const Icon(Icons.person_rounded,
+                      size: 15, color: Color(0xFF1565C0)),
                   const SizedBox(width: 6),
                   Expanded(
                     child: Text(
                       'Patient: ${widget.patientName}',
-                      style: GoogleFonts.inter(fontSize: 12, fontWeight: FontWeight.w600, color: const Color(0xFF1565C0)),
+                      style: GoogleFonts.inter(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w600,
+                          color: const Color(0xFF1565C0)),
                       overflow: TextOverflow.ellipsis,
                     ),
                   ),
@@ -159,7 +166,8 @@ class _TelemedicinePageState extends State<TelemedicinePage> {
                       margin: const EdgeInsets.symmetric(horizontal: 3),
                       padding: const EdgeInsets.symmetric(vertical: 8),
                       decoration: BoxDecoration(
-                        color: sel ? AppColors.primary : const Color(0xFFF5F7FA),
+                        color:
+                            sel ? AppColors.primary : const Color(0xFFF5F7FA),
                         borderRadius: BorderRadius.circular(10),
                       ),
                       child: Row(
@@ -171,9 +179,7 @@ class _TelemedicinePageState extends State<TelemedicinePage> {
                               height: 7,
                               decoration: BoxDecoration(
                                 shape: BoxShape.circle,
-                                color: sel
-                                    ? Colors.white
-                                    : _dotColor(s),
+                                color: sel ? Colors.white : _dotColor(s),
                               ),
                             ),
                             const SizedBox(width: 4),
@@ -183,7 +189,8 @@ class _TelemedicinePageState extends State<TelemedicinePage> {
                             style: GoogleFonts.inter(
                               fontSize: 11,
                               fontWeight: FontWeight.w600,
-                              color: sel ? Colors.white : AppColors.textSecondary,
+                              color:
+                                  sel ? Colors.white : AppColors.textSecondary,
                             ),
                           ),
                         ],
@@ -199,7 +206,8 @@ class _TelemedicinePageState extends State<TelemedicinePage> {
           // ─── Doctor List ───────────────────────────────
           Expanded(
             child: _isLoading
-                ? const Center(child: CircularProgressIndicator(color: AppColors.primary))
+                ? const Center(
+                    child: CircularProgressIndicator(color: AppColors.primary))
                 : _errorMessage != null
                     ? _buildError()
                     : _filtered.isEmpty
@@ -208,9 +216,11 @@ class _TelemedicinePageState extends State<TelemedicinePage> {
                             onRefresh: _loadDoctors,
                             color: AppColors.primary,
                             child: ListView.builder(
-                              padding: const EdgeInsets.fromLTRB(14, 10, 14, 20),
+                              padding:
+                                  const EdgeInsets.fromLTRB(14, 10, 14, 20),
                               itemCount: _filtered.length,
-                              itemBuilder: (_, i) => _buildDoctorCard(_filtered[i]),
+                              itemBuilder: (_, i) =>
+                                  _buildDoctorCard(_filtered[i]),
                             ),
                           ),
           ),
@@ -231,7 +241,10 @@ class _TelemedicinePageState extends State<TelemedicinePage> {
           borderRadius: BorderRadius.circular(14),
           border: Border.all(color: const Color(0xFFE8ECF0)),
           boxShadow: [
-            BoxShadow(color: Colors.black.withValues(alpha: 0.025), blurRadius: 8, offset: const Offset(0, 2)),
+            BoxShadow(
+                color: Colors.black.withValues(alpha: 0.025),
+                blurRadius: 8,
+                offset: const Offset(0, 2)),
           ],
         ),
         child: Row(
@@ -249,7 +262,10 @@ class _TelemedicinePageState extends State<TelemedicinePage> {
                   child: Center(
                     child: Text(
                       doc.initials,
-                      style: GoogleFonts.poppins(fontSize: 16, fontWeight: FontWeight.w700, color: AppColors.primary),
+                      style: GoogleFonts.poppins(
+                          fontSize: 16,
+                          fontWeight: FontWeight.w700,
+                          color: AppColors.primary),
                     ),
                   ),
                 ),
@@ -279,7 +295,10 @@ class _TelemedicinePageState extends State<TelemedicinePage> {
                     doc.name,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
-                    style: GoogleFonts.poppins(fontSize: 13, fontWeight: FontWeight.w600, color: AppColors.textPrimary),
+                    style: GoogleFonts.poppins(
+                        fontSize: 13,
+                        fontWeight: FontWeight.w600,
+                        color: AppColors.textPrimary),
                   ),
                   const SizedBox(height: 2),
                   if (doc.specialization != null)
@@ -287,29 +306,34 @@ class _TelemedicinePageState extends State<TelemedicinePage> {
                       doc.specialization!,
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
-                      style: GoogleFonts.inter(fontSize: 11.5, color: AppColors.textSecondary),
+                      style: GoogleFonts.inter(
+                          fontSize: 11.5, color: AppColors.textSecondary),
                     ),
                   const SizedBox(height: 3),
                   Row(
                     children: [
                       if (doc.city != null) ...[
-                        Icon(Icons.location_on_outlined, size: 11, color: AppColors.textHint),
+                        Icon(Icons.location_on_outlined,
+                            size: 11, color: AppColors.textHint),
                         const SizedBox(width: 2),
                         Text(
                           doc.city!,
-                          style: GoogleFonts.inter(fontSize: 10.5, color: AppColors.textHint),
+                          style: GoogleFonts.inter(
+                              fontSize: 10.5, color: AppColors.textHint),
                         ),
                         const SizedBox(width: 8),
                       ],
                       if (doc.hprId != null) ...[
-                        Icon(Icons.badge_outlined, size: 11, color: AppColors.textHint),
+                        Icon(Icons.badge_outlined,
+                            size: 11, color: AppColors.textHint),
                         const SizedBox(width: 2),
                         Flexible(
                           child: Text(
                             doc.hprId!,
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
-                            style: GoogleFonts.inter(fontSize: 10.5, color: AppColors.textHint),
+                            style: GoogleFonts.inter(
+                                fontSize: 10.5, color: AppColors.textHint),
                           ),
                         ),
                       ],
@@ -328,7 +352,8 @@ class _TelemedicinePageState extends State<TelemedicinePage> {
                 if (doc.isOnline) ...[
                   const SizedBox(height: 6),
                   Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
                     decoration: BoxDecoration(
                       color: const Color(0xFF4CAF50),
                       borderRadius: BorderRadius.circular(8),
@@ -336,9 +361,14 @@ class _TelemedicinePageState extends State<TelemedicinePage> {
                     child: Row(
                       mainAxisSize: MainAxisSize.min,
                       children: [
-                        const Icon(Icons.videocam_rounded, size: 12, color: Colors.white),
+                        const Icon(Icons.videocam_rounded,
+                            size: 12, color: Colors.white),
                         const SizedBox(width: 3),
-                        Text('Consult', style: GoogleFonts.inter(fontSize: 10, fontWeight: FontWeight.w600, color: Colors.white)),
+                        Text('Consult',
+                            style: GoogleFonts.inter(
+                                fontSize: 10,
+                                fontWeight: FontWeight.w600,
+                                color: Colors.white)),
                       ],
                     ),
                   ),
@@ -372,8 +402,11 @@ class _TelemedicinePageState extends State<TelemedicinePage> {
     }
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-      decoration: BoxDecoration(color: bg, borderRadius: BorderRadius.circular(6)),
-      child: Text(label, style: GoogleFonts.inter(fontSize: 10, fontWeight: FontWeight.w600, color: fg)),
+      decoration:
+          BoxDecoration(color: bg, borderRadius: BorderRadius.circular(6)),
+      child: Text(label,
+          style: GoogleFonts.inter(
+              fontSize: 10, fontWeight: FontWeight.w600, color: fg)),
     );
   }
 
@@ -385,9 +418,20 @@ class _TelemedicinePageState extends State<TelemedicinePage> {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(Icons.error_outline, size: 40, color: AppColors.error.withValues(alpha: 0.5)),
+            Icon(Icons.error_outline,
+                size: 40, color: AppColors.error.withValues(alpha: 0.5)),
             const SizedBox(height: 12),
-            Text(_errorMessage!, textAlign: TextAlign.center, style: GoogleFonts.inter(fontSize: 13, color: AppColors.textSecondary)),
+            Text(_errorMessage!,
+                textAlign: TextAlign.center,
+                style: GoogleFonts.inter(
+                    fontSize: 13, color: AppColors.textSecondary)),
+            const SizedBox(height: 8),
+            Text(
+              'If the list is empty unexpectedly, refresh once after login is restored.',
+              textAlign: TextAlign.center,
+              style:
+                  GoogleFonts.inter(fontSize: 11.5, color: AppColors.textHint),
+            ),
             const SizedBox(height: 12),
             TextButton.icon(
               onPressed: _loadDoctors,
@@ -407,11 +451,13 @@ class _TelemedicinePageState extends State<TelemedicinePage> {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(Icons.person_search_rounded, size: 40, color: AppColors.textHint.withValues(alpha: 0.5)),
+            Icon(Icons.person_search_rounded,
+                size: 40, color: AppColors.textHint.withValues(alpha: 0.5)),
             const SizedBox(height: 12),
             Text(
               'No ${_filter == 'All' ? '' : '${_filter.toLowerCase()} '}doctors found',
-              style: GoogleFonts.inter(fontSize: 13, color: AppColors.textSecondary),
+              style: GoogleFonts.inter(
+                  fontSize: 13, color: AppColors.textSecondary),
             ),
           ],
         ),
@@ -505,7 +551,8 @@ class _DoctorDetailPageState extends State<_DoctorDetailPage> {
     return Scaffold(
       backgroundColor: const Color(0xFFF5F7FA),
       body: _isLoading
-          ? const Center(child: CircularProgressIndicator(color: AppColors.primary))
+          ? const Center(
+              child: CircularProgressIndicator(color: AppColors.primary))
           : CustomScrollView(
               slivers: [
                 // ── Header ─────────────────────────────
@@ -536,37 +583,56 @@ class _DoctorDetailPageState extends State<_DoctorDetailPage> {
                                     width: 60,
                                     height: 60,
                                     decoration: BoxDecoration(
-                                      color: Colors.white.withValues(alpha: 0.15),
+                                      color:
+                                          Colors.white.withValues(alpha: 0.15),
                                       borderRadius: BorderRadius.circular(18),
-                                      border: Border.all(color: Colors.white.withValues(alpha: 0.2)),
+                                      border: Border.all(
+                                          color: Colors.white
+                                              .withValues(alpha: 0.2)),
                                     ),
                                     child: Center(
                                       child: Text(
                                         doc.initials,
-                                        style: GoogleFonts.poppins(fontSize: 22, fontWeight: FontWeight.w700, color: Colors.white),
+                                        style: GoogleFonts.poppins(
+                                            fontSize: 22,
+                                            fontWeight: FontWeight.w700,
+                                            color: Colors.white),
                                       ),
                                     ),
                                   ),
                                   const SizedBox(width: 14),
                                   Expanded(
                                     child: Column(
-                                      crossAxisAlignment: CrossAxisAlignment.start,
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
                                       children: [
                                         Text(
                                           doc.name,
-                                          style: GoogleFonts.poppins(fontSize: 16, fontWeight: FontWeight.w700, color: Colors.white),
+                                          style: GoogleFonts.poppins(
+                                              fontSize: 16,
+                                              fontWeight: FontWeight.w700,
+                                              color: Colors.white),
                                         ),
                                         if (doc.specialization != null) ...[
                                           const SizedBox(height: 2),
                                           Text(
                                             doc.specialization!,
-                                            style: GoogleFonts.inter(fontSize: 12, color: Colors.white.withValues(alpha: 0.8)),
+                                            style: GoogleFonts.inter(
+                                                fontSize: 12,
+                                                color: Colors.white
+                                                    .withValues(alpha: 0.8)),
                                           ),
                                         ],
                                         const SizedBox(height: 6),
                                         Row(
                                           children: [
-                                            _headerChip(doc.isOnline ? 'Online' : doc.isBusy ? 'Busy' : 'Offline', _dotColorStatic(doc.status)),
+                                            _headerChip(
+                                                doc.isOnline
+                                                    ? 'Online'
+                                                    : doc.isBusy
+                                                        ? 'Busy'
+                                                        : 'Offline',
+                                                _dotColorStatic(doc.status)),
                                             if (doc.city != null) ...[
                                               const SizedBox(width: 6),
                                               _headerChip(doc.city!, null),
@@ -590,8 +656,8 @@ class _DoctorDetailPageState extends State<_DoctorDetailPage> {
                 SliverToBoxAdapter(
                   child: Padding(
                     padding: const EdgeInsets.all(14),
-                      child: Column(
-                            children: [
+                    child: Column(
+                      children: [
                         // ─ Info Card ───────────────────
                         _card(
                           icon: Icons.person_outline_rounded,
@@ -599,17 +665,26 @@ class _DoctorDetailPageState extends State<_DoctorDetailPage> {
                           child: Column(
                             children: [
                               if (doc.phone != null)
-                                _infoRow(Icons.phone_outlined, 'Phone', doc.phone!),
+                                _infoRow(
+                                    Icons.phone_outlined, 'Phone', doc.phone!),
                               if (doc.email != null)
-                                _infoRow(Icons.email_outlined, 'Email', doc.email!),
+                                _infoRow(
+                                    Icons.email_outlined, 'Email', doc.email!),
                               if (doc.hprId != null)
-                                _infoRow(Icons.badge_outlined, 'HPR ID', doc.hprId!),
+                                _infoRow(
+                                    Icons.badge_outlined, 'HPR ID', doc.hprId!),
                               if (doc.gender != null)
-                                _infoRow(Icons.wc_outlined, 'Gender', doc.gender!.substring(0, 1).toUpperCase() + doc.gender!.substring(1)),
+                                _infoRow(
+                                    Icons.wc_outlined,
+                                    'Gender',
+                                    doc.gender!.substring(0, 1).toUpperCase() +
+                                        doc.gender!.substring(1)),
                               if (doc.qualification != null)
-                                _infoRow(Icons.school_outlined, 'Qualification', doc.qualification!),
+                                _infoRow(Icons.school_outlined, 'Qualification',
+                                    doc.qualification!),
                               if (doc.city != null)
-                                _infoRow(Icons.location_on_outlined, 'City', doc.city!),
+                                _infoRow(Icons.location_on_outlined, 'City',
+                                    doc.city!),
                             ],
                           ),
                         ),
@@ -625,22 +700,31 @@ class _DoctorDetailPageState extends State<_DoctorDetailPage> {
                             decoration: BoxDecoration(
                               color: const Color(0xFFF0FFF4),
                               borderRadius: BorderRadius.circular(10),
-                              border: Border.all(color: const Color(0xFFC8E6C9)),
+                              border:
+                                  Border.all(color: const Color(0xFFC8E6C9)),
                             ),
                             child: Column(
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
                                 Row(
                                   children: [
-                                    const Icon(Icons.videocam_rounded, size: 15, color: Color(0xFF2E7D32)),
+                                    const Icon(Icons.videocam_rounded,
+                                        size: 15, color: Color(0xFF2E7D32)),
                                     const SizedBox(width: 6),
-                                    Text('Video Consultation', style: GoogleFonts.inter(fontSize: 12.5, fontWeight: FontWeight.w600, color: const Color(0xFF2E7D32))),
+                                    Text('Video Consultation',
+                                        style: GoogleFonts.inter(
+                                            fontSize: 12.5,
+                                            fontWeight: FontWeight.w600,
+                                            color: const Color(0xFF2E7D32))),
                                   ],
                                 ),
                                 const SizedBox(height: 4),
                                 Text(
                                   'Virtual appointment with your doctor via secure video call.',
-                                  style: GoogleFonts.inter(fontSize: 11.5, color: AppColors.textSecondary, height: 1.4),
+                                  style: GoogleFonts.inter(
+                                      fontSize: 11.5,
+                                      color: AppColors.textSecondary,
+                                      height: 1.4),
                                 ),
                               ],
                             ),
@@ -709,16 +793,21 @@ class _DoctorDetailPageState extends State<_DoctorDetailPage> {
                                     decoration: BoxDecoration(
                                       color: const Color(0xFFFFF8E1),
                                       borderRadius: BorderRadius.circular(8),
-                                      border: Border.all(color: const Color(0xFFFFE082)),
+                                      border: Border.all(
+                                          color: const Color(0xFFFFE082)),
                                     ),
                                     child: Row(
                                       children: [
-                                        const Icon(Icons.info_outline, size: 15, color: Color(0xFFF57F17)),
+                                        const Icon(Icons.info_outline,
+                                            size: 15, color: Color(0xFFF57F17)),
                                         const SizedBox(width: 8),
                                         Expanded(
                                           child: Text(
                                             'Patient ID is missing for this consultation. Open telemedicine from a verified patient appointment.',
-                                            style: GoogleFonts.inter(fontSize: 11, height: 1.3, color: const Color(0xFFF57F17)),
+                                            style: GoogleFonts.inter(
+                                                fontSize: 11,
+                                                height: 1.3,
+                                                color: const Color(0xFFF57F17)),
                                           ),
                                         ),
                                       ],
@@ -733,16 +822,21 @@ class _DoctorDetailPageState extends State<_DoctorDetailPage> {
                                     onPressed: _resolvedPatientId > 0
                                         ? () => _startConsultation(doc)
                                         : null,
-                                    icon: const Icon(Icons.videocam_rounded, size: 18),
+                                    icon: const Icon(Icons.videocam_rounded,
+                                        size: 18),
                                     label: Text(
                                       'Start Video Consultation',
-                                      style: GoogleFonts.poppins(fontSize: 13, fontWeight: FontWeight.w600),
+                                      style: GoogleFonts.poppins(
+                                          fontSize: 13,
+                                          fontWeight: FontWeight.w600),
                                     ),
                                     style: ElevatedButton.styleFrom(
                                       backgroundColor: const Color(0xFF4CAF50),
                                       foregroundColor: Colors.white,
                                       elevation: 0,
-                                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                                      shape: RoundedRectangleBorder(
+                                          borderRadius:
+                                              BorderRadius.circular(12)),
                                     ),
                                   ),
                                 ),
@@ -756,18 +850,23 @@ class _DoctorDetailPageState extends State<_DoctorDetailPage> {
                                   decoration: BoxDecoration(
                                     color: const Color(0xFFFFF8E1),
                                     borderRadius: BorderRadius.circular(8),
-                                    border: Border.all(color: const Color(0xFFFFE082)),
+                                    border: Border.all(
+                                        color: const Color(0xFFFFE082)),
                                   ),
                                   child: Row(
                                     children: [
-                                      const Icon(Icons.info_outline, size: 15, color: Color(0xFFF57F17)),
+                                      const Icon(Icons.info_outline,
+                                          size: 15, color: Color(0xFFF57F17)),
                                       const SizedBox(width: 8),
                                       Expanded(
                                         child: Text(
                                           doc.isBusy
                                               ? 'Doctor is busy. Please try again shortly.'
                                               : 'Video consultation available when doctor is online.',
-                                          style: GoogleFonts.inter(fontSize: 11, height: 1.3, color: const Color(0xFFF57F17)),
+                                          style: GoogleFonts.inter(
+                                              fontSize: 11,
+                                              height: 1.3,
+                                              color: const Color(0xFFF57F17)),
                                         ),
                                       ),
                                     ],
@@ -788,7 +887,8 @@ class _DoctorDetailPageState extends State<_DoctorDetailPage> {
   }
 
   // ── Reusable card wrapper ───────────────────────────────
-  Widget _card({required IconData icon, required String title, required Widget child}) {
+  Widget _card(
+      {required IconData icon, required String title, required Widget child}) {
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.all(14),
@@ -797,7 +897,10 @@ class _DoctorDetailPageState extends State<_DoctorDetailPage> {
         borderRadius: BorderRadius.circular(16),
         border: Border.all(color: const Color(0xFFE8ECF0)),
         boxShadow: [
-          BoxShadow(color: Colors.black.withValues(alpha: 0.02), blurRadius: 8, offset: const Offset(0, 2)),
+          BoxShadow(
+              color: Colors.black.withValues(alpha: 0.02),
+              blurRadius: 8,
+              offset: const Offset(0, 2)),
         ],
       ),
       child: Column(
@@ -807,7 +910,11 @@ class _DoctorDetailPageState extends State<_DoctorDetailPage> {
             children: [
               Icon(icon, size: 16, color: AppColors.primary),
               const SizedBox(width: 6),
-              Text(title, style: GoogleFonts.poppins(fontSize: 13, fontWeight: FontWeight.w600, color: AppColors.textPrimary)),
+              Text(title,
+                  style: GoogleFonts.poppins(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w600,
+                      color: AppColors.textPrimary)),
             ],
           ),
           const SizedBox(height: 12),
@@ -827,12 +934,17 @@ class _DoctorDetailPageState extends State<_DoctorDetailPage> {
           const SizedBox(width: 8),
           SizedBox(
             width: 80,
-            child: Text(label, style: GoogleFonts.inter(fontSize: 11.5, color: AppColors.textHint)),
+            child: Text(label,
+                style: GoogleFonts.inter(
+                    fontSize: 11.5, color: AppColors.textHint)),
           ),
           Expanded(
             child: Text(
               value,
-              style: GoogleFonts.inter(fontSize: 12, fontWeight: FontWeight.w500, color: AppColors.textPrimary),
+              style: GoogleFonts.inter(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w500,
+                  color: AppColors.textPrimary),
               overflow: TextOverflow.ellipsis,
             ),
           ),
@@ -853,10 +965,18 @@ class _DoctorDetailPageState extends State<_DoctorDetailPage> {
         mainAxisSize: MainAxisSize.min,
         children: [
           if (dotColor != null) ...[
-            Container(width: 6, height: 6, decoration: BoxDecoration(shape: BoxShape.circle, color: dotColor)),
+            Container(
+                width: 6,
+                height: 6,
+                decoration:
+                    BoxDecoration(shape: BoxShape.circle, color: dotColor)),
             const SizedBox(width: 4),
           ],
-          Text(text, style: GoogleFonts.inter(fontSize: 10, fontWeight: FontWeight.w600, color: Colors.white)),
+          Text(text,
+              style: GoogleFonts.inter(
+                  fontSize: 10,
+                  fontWeight: FontWeight.w600,
+                  color: Colors.white)),
         ],
       ),
     );
@@ -870,10 +990,13 @@ class _DoctorDetailPageState extends State<_DoctorDetailPage> {
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
         title: Row(
           children: [
-            const Icon(Icons.video_call_rounded, color: Color(0xFF2E7D32), size: 22),
+            const Icon(Icons.video_call_rounded,
+                color: Color(0xFF2E7D32), size: 22),
             const SizedBox(width: 10),
             Expanded(
-              child: Text('Request Consultation', style: GoogleFonts.poppins(fontSize: 15, fontWeight: FontWeight.w600)),
+              child: Text('Request Consultation',
+                  style: GoogleFonts.poppins(
+                      fontSize: 15, fontWeight: FontWeight.w600)),
             ),
           ],
         ),
@@ -881,7 +1004,8 @@ class _DoctorDetailPageState extends State<_DoctorDetailPage> {
           'Send a consultation request to ${doc.name}?'
           '\n\nThe doctor will be notified and must accept before the call begins.'
           '${widget.patientName != null ? '\n\nPatient: ${widget.patientName}' : ''}',
-          style: GoogleFonts.inter(fontSize: 13, height: 1.4, color: AppColors.textSecondary),
+          style: GoogleFonts.inter(
+              fontSize: 13, height: 1.4, color: AppColors.textSecondary),
         ),
         actions: [
           TextButton(
@@ -892,9 +1016,9 @@ class _DoctorDetailPageState extends State<_DoctorDetailPage> {
             onPressed: _isLaunchingConsultation
                 ? null
                 : () {
-              Navigator.pop(ctx);
-              _launchConsultation(doc);
-            },
+                    Navigator.pop(ctx);
+                    _launchConsultation(doc);
+                  },
             icon: _isLaunchingConsultation
                 ? const SizedBox(
                     width: 16,
@@ -907,12 +1031,14 @@ class _DoctorDetailPageState extends State<_DoctorDetailPage> {
                 : const Icon(Icons.send_rounded, size: 16),
             label: Text(
               _isLaunchingConsultation ? 'Starting...' : 'Request',
-              style: GoogleFonts.inter(fontSize: 13, fontWeight: FontWeight.w600),
+              style:
+                  GoogleFonts.inter(fontSize: 13, fontWeight: FontWeight.w600),
             ),
             style: ElevatedButton.styleFrom(
               backgroundColor: const Color(0xFF4CAF50),
               foregroundColor: Colors.white,
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+              shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(10)),
             ),
           ),
         ],

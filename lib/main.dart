@@ -4,6 +4,7 @@ import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'services/api_service.dart';
+import 'services/session_expiry_service.dart';
 import 'screens/dashboard_page.dart';
 import 'screens/login_page.dart';
 import 'utils/constants.dart';
@@ -35,6 +36,7 @@ class CHOApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
+      navigatorKey: SessionExpiryService.navigatorKey,
       title: AppStrings.appName,
       debugShowCheckedModeBanner: false,
       theme: ThemeData(

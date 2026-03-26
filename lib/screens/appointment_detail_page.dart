@@ -1,15 +1,148 @@
+import 'dart:convert';
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:intl/intl.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../models/appointment_model.dart';
 import '../utils/constants.dart';
 import 'telemedicine_page.dart';
 
-class AppointmentDetailPage extends StatelessWidget {
+class AppointmentDetailPage extends StatefulWidget {
   const AppointmentDetailPage({super.key, required this.appointment});
 
   final Appointment appointment;
+
+  @override
+  State<AppointmentDetailPage> createState() => _AppointmentDetailPageState();
+}
+
+class _AppointmentDetailPageState extends State<AppointmentDetailPage> {
+  late Appointment appointment;
+  String? _presLink;
+  bool _fetchingPrescription = false;
+
+  @override
+  void initState() {
+    super.initState();
+    appointment = widget.appointment;
+    _presLink = appointment.presLink;
+    // Auto-fetch prescription if not already available
+    if (_presLink == null || _presLink!.isEmpty) {
+      _fetchPrescription();
+    }
+  }
+
+  Future<void> _fetchPrescription() async {
+    if (_fetchingPrescription) return;
+    setState(() => _fetchingPrescription = true);
+
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final token = prefs.getString('auth_token') ?? '';
+      final cookies = prefs.getString('cookies') ?? '';
+      final appointmentId = appointment.id;
+
+      Future<String?> authGet(String url) async {
+        try {
+          final client = HttpClient();
+          client.badCertificateCallback = (_, __, ___) => true;
+          final request = await client.getUrl(Uri.parse(url));
+          if (token.isNotEmpty) request.headers.set('Authorization', 'Bearer $token');
+          request.headers.set('Accept', 'application/json');
+          if (cookies.isNotEmpty) request.headers.set('Cookie', cookies);
+          final response = await request.close().timeout(const Duration(seconds: 10));
+          if (response.statusCode == 200 || response.statusCode == 201) {
+            return await response.transform(const Utf8Decoder()).join();
+          }
+        } catch (_) {}
+        return null;
+      }
+
+      String? extractPresLink(String body) {
+        try {
+          final data = jsonDecode(body);
+          if (data is Map<String, dynamic>) {
+            final link = (data['pres_link'] ?? data['presLink'] ??
+                data['pdf_url'] ?? data['pdfUrl'] ??
+                data['prescription_url'] ?? '').toString().trim();
+            if (link.isNotEmpty) return link;
+            // Check nested
+            final nested = data['prescription'] ?? data['data'] ?? data['appointment'];
+            if (nested is Map<String, dynamic>) {
+              final nLink = (nested['pres_link'] ?? nested['pdf_url'] ?? nested['presLink'] ?? '').toString().trim();
+              if (nLink.isNotEmpty) return nLink;
+            }
+          }
+        } catch (_) {}
+        return null;
+      }
+
+      // Try multiple endpoints
+      final endpoints = [
+        'https://dhanvantari.net.in/appointment/api/appointments/$appointmentId',
+        'https://dhanvantari.net.in/appointment/api/appointments/$appointmentId/',
+        'https://dhanvantari.net.in/prescription_api/get_prescription_by_appointment/$appointmentId',
+      ];
+
+      for (final url in endpoints) {
+        final body = await authGet(url);
+        if (body != null) {
+          final link = extractPresLink(body);
+          if (link != null) {
+            if (mounted) {
+              setState(() {
+                _presLink = link.startsWith('http') ? link : 'https://dhanvantari.net.in$link';
+              });
+            }
+            return;
+          }
+        }
+      }
+
+      // Fallback: try CHO appointment list
+      final choId = prefs.getInt('cho_id') ?? 0;
+      if (choId > 0) {
+        final body = await authGet('https://dhanvantari.net.in/appointment/api/appointments/cho/$choId');
+        if (body != null) {
+          try {
+            final data = jsonDecode(body);
+            final List items = data is List ? data : (data['data'] is List ? data['data'] : []);
+            final target = items.firstWhere(
+              (a) => a['id'].toString() == appointmentId.toString() ||
+                  a['appointment_id'].toString() == appointmentId.toString(),
+              orElse: () => null,
+            );
+            if (target != null) {
+              final link = (target['pres_link'] ?? target['presLink'] ?? target['pdf_url'] ?? '').toString().trim();
+              if (link.isNotEmpty) {
+                if (mounted) {
+                  setState(() {
+                    _presLink = link.startsWith('http') ? link : 'https://dhanvantari.net.in$link';
+                  });
+                }
+                return;
+              }
+            }
+          } catch (_) {}
+        }
+      }
+    } catch (_) {
+    } finally {
+      if (mounted) setState(() => _fetchingPrescription = false);
+    }
+  }
+
+  Future<void> _openPrescription() async {
+    if (_presLink == null || _presLink!.isEmpty) return;
+    final uri = Uri.tryParse(_presLink!);
+    if (uri != null && await canLaunchUrl(uri)) {
+      await launchUrl(uri, mode: LaunchMode.externalApplication);
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -24,7 +157,7 @@ class AppointmentDetailPage extends StatelessWidget {
           // ── SLIVER APP BAR ──
           SliverAppBar(
             pinned: true,
-            expandedHeight: 230,
+            expandedHeight: 188,
             backgroundColor: AppColors.primary,
             foregroundColor: Colors.white,
             flexibleSpace: FlexibleSpaceBar(
@@ -33,13 +166,13 @@ class AppointmentDetailPage extends StatelessWidget {
                     const BoxDecoration(gradient: AppColors.headerGradient),
                 child: SafeArea(
                   child: Padding(
-                    padding: const EdgeInsets.fromLTRB(20, 24, 20, 24),
+                    padding: const EdgeInsets.fromLTRB(18, 18, 18, 18),
                     child: Column(
                       mainAxisAlignment: MainAxisAlignment.end,
                       children: [
                         Container(
-                          width: 76,
-                          height: 76,
+                          width: 62,
+                          height: 62,
                           decoration: BoxDecoration(
                             color: Colors.white.withValues(alpha: 0.16),
                             shape: BoxShape.circle,
@@ -52,24 +185,24 @@ class AppointmentDetailPage extends StatelessWidget {
                             child: Text(
                               appointment.initials,
                               style: GoogleFonts.poppins(
-                                fontSize: 28,
+                                fontSize: 23,
                                 fontWeight: FontWeight.w700,
                                 color: Colors.white,
                               ),
                             ),
                           ),
                         ),
-                        const SizedBox(height: 12),
+                        const SizedBox(height: 10),
                         Text(
                           appointment.patientName ?? 'Unknown Patient',
                           textAlign: TextAlign.center,
                           style: GoogleFonts.poppins(
-                            fontSize: 22,
+                            fontSize: 18.5,
                             fontWeight: FontWeight.w700,
                             color: Colors.white,
                           ),
                         ),
-                        const SizedBox(height: 8),
+                        const SizedBox(height: 6),
                         Wrap(
                           alignment: WrapAlignment.center,
                           spacing: 8,
@@ -97,7 +230,7 @@ class AppointmentDetailPage extends StatelessWidget {
           // ── BODY ──
           SliverToBoxAdapter(
             child: Padding(
-              padding: const EdgeInsets.fromLTRB(16, 16, 16, 28),
+              padding: const EdgeInsets.fromLTRB(16, 14, 16, 22),
               child: Column(
                 children: [
                   // ══ 1. APPOINTMENT OVERVIEW ══
@@ -106,7 +239,7 @@ class AppointmentDetailPage extends StatelessWidget {
                     icon: Icons.calendar_month_rounded,
                     child: _buildOverviewGrid(context),
                   ),
-                  const SizedBox(height: 14),
+                  const SizedBox(height: 12),
 
                   // ══ 2. PATIENT INFORMATION ══
                   if (detailRows.isNotEmpty)
@@ -120,7 +253,7 @@ class AppointmentDetailPage extends StatelessWidget {
                             .toList(),
                       ),
                     ),
-                  if (detailRows.isNotEmpty) const SizedBox(height: 14),
+                  if (detailRows.isNotEmpty) const SizedBox(height: 12),
 
                   // ══ 3. CLINICAL SNAPSHOT ══
                   _SectionCard(
@@ -140,7 +273,7 @@ class AppointmentDetailPage extends StatelessWidget {
                       ],
                     ),
                   ),
-                  const SizedBox(height: 14),
+                  const SizedBox(height: 12),
 
                   // ══ 4. VISIT NOTES ══
                   if (_hasVisitNotes())
@@ -165,9 +298,109 @@ class AppointmentDetailPage extends StatelessWidget {
                         ],
                       ),
                     ),
-                  if (_hasVisitNotes()) const SizedBox(height: 14),
+                  if (_hasVisitNotes()) const SizedBox(height: 12),
 
-                  // ══ 5. OBSERVATION HISTORY ══
+                  // ══ 5. PRESCRIPTION ══
+                  _SectionCard(
+                    title: 'Prescription',
+                    icon: Icons.description_rounded,
+                    child: _presLink != null && _presLink!.isNotEmpty
+                        ? Column(
+                            children: [
+                              Row(
+                                children: [
+                                  const Icon(Icons.picture_as_pdf_rounded,
+                                      color: Color(0xFFEF4444), size: 28),
+                                  const SizedBox(width: 12),
+                                  Expanded(
+                                    child: Column(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
+                                      children: [
+                                        Text(
+                                          'Prescription Available',
+                                          style: GoogleFonts.inter(
+                                            fontSize: 14,
+                                            fontWeight: FontWeight.w600,
+                                            color: const Color(0xFF1F2937),
+                                          ),
+                                        ),
+                                        const SizedBox(height: 2),
+                                        Text(
+                                          'Tap to view the prescription PDF',
+                                          style: GoogleFonts.inter(
+                                            fontSize: 12,
+                                            color: const Color(0xFF6B7280),
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                ],
+                              ),
+                              const SizedBox(height: 12),
+                              SizedBox(
+                                width: double.infinity,
+                                child: ElevatedButton.icon(
+                                  onPressed: _openPrescription,
+                                  icon: const Icon(Icons.open_in_new_rounded,
+                                      size: 18),
+                                  label: Text('View Prescription',
+                                      style: GoogleFonts.inter(
+                                          fontWeight: FontWeight.w600)),
+                                  style: ElevatedButton.styleFrom(
+                                    backgroundColor: const Color(0xFF10B981),
+                                    foregroundColor: Colors.white,
+                                    padding: const EdgeInsets.symmetric(
+                                        vertical: 12),
+                                    shape: RoundedRectangleBorder(
+                                        borderRadius:
+                                            BorderRadius.circular(10)),
+                                  ),
+                                ),
+                              ),
+                            ],
+                          )
+                        : Row(
+                            children: [
+                              if (_fetchingPrescription)
+                                const SizedBox(
+                                  width: 18,
+                                  height: 18,
+                                  child: CircularProgressIndicator(
+                                      strokeWidth: 2),
+                                )
+                              else
+                                Icon(Icons.info_outline_rounded,
+                                    color: Colors.grey[400], size: 20),
+                              const SizedBox(width: 12),
+                              Expanded(
+                                child: Text(
+                                  _fetchingPrescription
+                                      ? 'Checking for prescription…'
+                                      : 'No prescription available yet',
+                                  style: GoogleFonts.inter(
+                                    fontSize: 13,
+                                    color: const Color(0xFF6B7280),
+                                  ),
+                                ),
+                              ),
+                              if (!_fetchingPrescription)
+                                TextButton(
+                                  onPressed: _fetchPrescription,
+                                  child: Text('Refresh',
+                                      style: GoogleFonts.inter(
+                                        fontSize: 13,
+                                        fontWeight: FontWeight.w600,
+                                        color: const Color(0xFF10B981),
+                                      )),
+                                ),
+                            ],
+                          ),
+                  ),
+                  const SizedBox(height: 12),
+
+                  // ══ 6. OBSERVATION HISTORY ══
                   if (appointment.previousObservations?.isNotEmpty == true) ...[
                     _SectionCard(
                       title: 'Observation History',
@@ -194,10 +427,10 @@ class AppointmentDetailPage extends StatelessWidget {
                             .toList(),
                       ),
                     ),
-                    const SizedBox(height: 14),
+                    const SizedBox(height: 12),
                   ],
 
-                  // ══ 6. ADDITIONAL DATA ══
+                  // ══ 7. ADDITIONAL DATA ══
                   if (extraRows.isNotEmpty)
                     _SectionCard(
                       title: 'Additional Details',
@@ -268,14 +501,14 @@ class AppointmentDetailPage extends StatelessWidget {
       final right = (i + 1 < tiles.length) ? tiles[i + 1] : null;
       rows.add(
         Padding(
-          padding: EdgeInsets.only(top: i > 0 ? 10 : 0),
+          padding: EdgeInsets.only(top: i > 0 ? 8 : 0),
           child: Row(
             children: [
               Expanded(
                 child: _OverviewTile(
                     label: left.label, value: left.value, icon: left.icon),
               ),
-              const SizedBox(width: 10),
+              const SizedBox(width: 8),
               Expanded(
                 child: right != null
                     ? _OverviewTile(
@@ -357,7 +590,7 @@ class AppointmentDetailPage extends StatelessWidget {
       final right = (i + 1 < vitals.length) ? vitals[i + 1] : null;
       rows.add(
         Padding(
-          padding: EdgeInsets.only(top: i > 0 ? 10 : 0),
+          padding: EdgeInsets.only(top: i > 0 ? 8 : 0),
           child: Row(
             children: [
               Expanded(
@@ -368,7 +601,7 @@ class AppointmentDetailPage extends StatelessWidget {
                   color: left.color,
                 ),
               ),
-              const SizedBox(width: 10),
+              const SizedBox(width: 8),
               Expanded(
                 child: right != null
                     ? _VitalCard(
@@ -423,27 +656,76 @@ class AppointmentDetailPage extends StatelessWidget {
 
     // Keys already displayed in other sections
     const hiddenKeys = {
-      'id', 'appointment_id', 'patient_name', 'patientName', 'name',
-      'patient_phone', 'patientPhone', 'phone', 'mobile',
-      'patient_email', 'patientEmail', 'email',
-      'appointment_date', 'appointmentDate', 'date',
-      'appointment_time', 'appointmentTime', 'time',
-      'status', 'reason', 'visit_reason', 'purpose',
-      'doctor_name', 'doctorName',
-      'village_name', 'villageName', 'village',
-      'sub_center', 'subCenter',
-      'cho_name', 'choName', 'cho_id', 'choId',
-      'notes', 'remark', 'remarks',
-      'created_at', 'createdAt', 'updated_at', 'updatedAt',
-      'gender', 'age', 'address',
-      'token_number', 'tokenNumber', 'token',
-      'appointment_type', 'appointmentType', 'type',
-      'abha_id', 'abhaId', 'ABHA_ID',
-      'patient_id', 'patientId',
-      'spo2', 'temperature', 'blood_pressure', 'bp',
-      'height', 'weight', 'bmi',
-      'chief_complaints', 'chiefComplaints',
-      'previous_observations', 'observations',
+      'id',
+      'appointment_id',
+      'patient_name',
+      'patientName',
+      'name',
+      'patient_phone',
+      'patientPhone',
+      'phone',
+      'mobile',
+      'patient_email',
+      'patientEmail',
+      'email',
+      'appointment_date',
+      'appointmentDate',
+      'date',
+      'appointment_time',
+      'appointmentTime',
+      'time',
+      'status',
+      'reason',
+      'visit_reason',
+      'purpose',
+      'doctor_name',
+      'doctorName',
+      'village_name',
+      'villageName',
+      'village',
+      'sub_center',
+      'subCenter',
+      'cho_name',
+      'choName',
+      'cho_id',
+      'choId',
+      'notes',
+      'remark',
+      'remarks',
+      'created_at',
+      'createdAt',
+      'updated_at',
+      'updatedAt',
+      'gender',
+      'age',
+      'address',
+      'token_number',
+      'tokenNumber',
+      'token',
+      'appointment_type',
+      'appointmentType',
+      'type',
+      'abha_id',
+      'abhaId',
+      'ABHA_ID',
+      'patient_id',
+      'patientId',
+      'spo2',
+      'temperature',
+      'blood_pressure',
+      'bp',
+      'height',
+      'weight',
+      'bmi',
+      'chief_complaints',
+      'chiefComplaints',
+      'previous_observations',
+      'observations',
+      'pres_link',
+      'presLink',
+      'pdf_url',
+      'pdfUrl',
+      'prescription_url',
     };
 
     final rows = <(String, String)>[];
@@ -514,8 +796,7 @@ class AppointmentDetailPage extends StatelessWidget {
         .join(' ');
   }
 
-  static String _stringValue(dynamic value) =>
-      value?.toString().trim() ?? '';
+  static String _stringValue(dynamic value) => value?.toString().trim() ?? '';
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -554,16 +835,16 @@ class _SectionCard extends StatelessWidget {
   Widget build(BuildContext context) {
     return Container(
       width: double.infinity,
-      padding: const EdgeInsets.all(18),
+      padding: const EdgeInsets.all(15),
       decoration: BoxDecoration(
         color: Colors.white,
-        borderRadius: BorderRadius.circular(22),
+        borderRadius: BorderRadius.circular(18),
         border: Border.all(color: AppColors.cardBorder),
         boxShadow: [
           BoxShadow(
             color: Colors.black.withValues(alpha: 0.04),
-            blurRadius: 14,
-            offset: const Offset(0, 6),
+            blurRadius: 10,
+            offset: const Offset(0, 4),
           ),
         ],
       ),
@@ -573,26 +854,26 @@ class _SectionCard extends StatelessWidget {
           Row(
             children: [
               Container(
-                width: 38,
-                height: 38,
+                width: 34,
+                height: 34,
                 decoration: BoxDecoration(
                   color: AppColors.primary.withValues(alpha: 0.1),
-                  borderRadius: BorderRadius.circular(12),
+                  borderRadius: BorderRadius.circular(10),
                 ),
-                child: Icon(icon, color: AppColors.primary, size: 20),
+                child: Icon(icon, color: AppColors.primary, size: 18),
               ),
-              const SizedBox(width: 12),
+              const SizedBox(width: 10),
               Text(
                 title,
-                style: GoogleFonts.poppins(
-                  fontSize: 16,
-                  fontWeight: FontWeight.w600,
+                style: GoogleFonts.dmSans(
+                  fontSize: 15,
+                  fontWeight: FontWeight.w700,
                   color: AppColors.textPrimary,
                 ),
               ),
             ],
           ),
-          const SizedBox(height: 18),
+          const SizedBox(height: 14),
           child,
         ],
       ),
@@ -611,7 +892,7 @@ class _HeroChip extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
       decoration: BoxDecoration(
         color: Colors.white.withValues(alpha: 0.16),
         borderRadius: BorderRadius.circular(24),
@@ -619,7 +900,7 @@ class _HeroChip extends StatelessWidget {
       child: Text(
         label,
         style: GoogleFonts.inter(
-          fontSize: 11,
+          fontSize: 10,
           fontWeight: FontWeight.w700,
           color: Colors.white,
           letterSpacing: 0.2,
@@ -646,31 +927,31 @@ class _OverviewTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      padding: const EdgeInsets.all(14),
+      padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
         color: const Color(0xFFF8FBFB),
-        borderRadius: BorderRadius.circular(16),
+        borderRadius: BorderRadius.circular(14),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Icon(icon, size: 18, color: AppColors.primary),
-          const SizedBox(height: 10),
+          Icon(icon, size: 16, color: AppColors.primary),
+          const SizedBox(height: 8),
           Text(
             label,
             style: GoogleFonts.inter(
-              fontSize: 11,
+              fontSize: 10,
               color: AppColors.textSecondary,
             ),
           ),
-          const SizedBox(height: 4),
+          const SizedBox(height: 3),
           Text(
             value,
             maxLines: 2,
             overflow: TextOverflow.ellipsis,
-            style: GoogleFonts.poppins(
-              fontSize: 14,
-              fontWeight: FontWeight.w600,
+            style: GoogleFonts.dmSans(
+              fontSize: 13,
+              fontWeight: FontWeight.w700,
               color: AppColors.textPrimary,
             ),
           ),
@@ -692,7 +973,7 @@ class _DetailRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      padding: const EdgeInsets.symmetric(vertical: 11),
+      padding: const EdgeInsets.symmetric(vertical: 9),
       decoration: BoxDecoration(
         border: Border(
           bottom:
@@ -703,11 +984,11 @@ class _DetailRow extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           SizedBox(
-            width: 118,
+            width: 104,
             child: Text(
               label,
               style: GoogleFonts.inter(
-                fontSize: 13,
+                fontSize: 12,
                 color: AppColors.textSecondary,
                 fontWeight: FontWeight.w500,
               ),
@@ -717,8 +998,8 @@ class _DetailRow extends StatelessWidget {
             child: Text(
               value,
               style: GoogleFonts.inter(
-                fontSize: 13,
-                height: 1.5,
+                fontSize: 12.5,
+                height: 1.4,
                 color: AppColors.textPrimary,
                 fontWeight: FontWeight.w600,
               ),
@@ -743,7 +1024,7 @@ class _StackedDetailRow extends StatelessWidget {
   Widget build(BuildContext context) {
     return Container(
       width: double.infinity,
-      padding: const EdgeInsets.symmetric(vertical: 10),
+      padding: const EdgeInsets.symmetric(vertical: 8),
       decoration: BoxDecoration(
         border: Border(
           bottom:
@@ -756,7 +1037,7 @@ class _StackedDetailRow extends StatelessWidget {
           Text(
             label,
             style: GoogleFonts.inter(
-              fontSize: 11,
+              fontSize: 10,
               color: AppColors.textHint,
               fontWeight: FontWeight.w600,
               letterSpacing: 0.2,
@@ -766,8 +1047,8 @@ class _StackedDetailRow extends StatelessWidget {
           Text(
             value,
             style: GoogleFonts.inter(
-              fontSize: 13,
-              height: 1.4,
+              fontSize: 12,
+              height: 1.35,
               color: AppColors.textPrimary,
               fontWeight: FontWeight.w500,
             ),
@@ -797,23 +1078,23 @@ class _VitalCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      padding: const EdgeInsets.all(14),
+      padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
         color: color.withValues(alpha: 0.08),
-        borderRadius: BorderRadius.circular(16),
+        borderRadius: BorderRadius.circular(14),
       ),
       child: Row(
         children: [
           Container(
-            width: 36,
-            height: 36,
+            width: 32,
+            height: 32,
             decoration: BoxDecoration(
               color: color.withValues(alpha: 0.14),
-              borderRadius: BorderRadius.circular(10),
+              borderRadius: BorderRadius.circular(9),
             ),
-            child: Icon(icon, color: color, size: 18),
+            child: Icon(icon, color: color, size: 16),
           ),
-          const SizedBox(width: 10),
+          const SizedBox(width: 8),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -821,18 +1102,18 @@ class _VitalCard extends StatelessWidget {
                 Text(
                   label,
                   style: GoogleFonts.inter(
-                    fontSize: 11,
+                    fontSize: 10,
                     color: AppColors.textSecondary,
                   ),
                 ),
-                const SizedBox(height: 4),
+                const SizedBox(height: 3),
                 Text(
                   value,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
-                  style: GoogleFonts.poppins(
-                    fontSize: 14,
-                    fontWeight: FontWeight.w600,
+                  style: GoogleFonts.dmSans(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w700,
                     color: AppColors.textPrimary,
                   ),
                 ),
@@ -858,10 +1139,10 @@ class _TextBlock extends StatelessWidget {
   Widget build(BuildContext context) {
     return Container(
       width: double.infinity,
-      padding: const EdgeInsets.all(14),
+      padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
         color: const Color(0xFFF8FBFB),
-        borderRadius: BorderRadius.circular(16),
+        borderRadius: BorderRadius.circular(14),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -869,17 +1150,17 @@ class _TextBlock extends StatelessWidget {
           Text(
             label,
             style: GoogleFonts.inter(
-              fontSize: 12,
+              fontSize: 11,
               color: AppColors.textSecondary,
               fontWeight: FontWeight.w600,
             ),
           ),
-          const SizedBox(height: 8),
+          const SizedBox(height: 6),
           Text(
             value,
             style: GoogleFonts.inter(
-              fontSize: 13,
-              height: 1.55,
+              fontSize: 12,
+              height: 1.45,
               color: AppColors.textPrimary,
             ),
           ),
@@ -913,7 +1194,7 @@ class _TelemedicineBottomBar extends StatelessWidget {
       child: SafeArea(
         top: false,
         child: Padding(
-          padding: const EdgeInsets.fromLTRB(14, 10, 14, 10),
+          padding: const EdgeInsets.fromLTRB(14, 8, 14, 8),
           child: Row(
             children: [
               // Browse Doctors button
@@ -987,29 +1268,29 @@ class _BottomBarButton extends StatelessWidget {
   Widget build(BuildContext context) {
     return Material(
       color: filled ? color : Colors.transparent,
-      borderRadius: BorderRadius.circular(12),
+      borderRadius: BorderRadius.circular(11),
       child: InkWell(
         onTap: onTap,
-        borderRadius: BorderRadius.circular(12),
+        borderRadius: BorderRadius.circular(11),
         child: Container(
-          height: 46,
+          height: 42,
           decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(12),
+            borderRadius: BorderRadius.circular(11),
             border: filled ? null : Border.all(color: color, width: 1.5),
           ),
           child: Row(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              Icon(icon, size: 17, color: filled ? Colors.white : color),
-              const SizedBox(width: 6),
+              Icon(icon, size: 15, color: filled ? Colors.white : color),
+              const SizedBox(width: 5),
               Flexible(
                 child: Text(
                   label,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
-                  style: GoogleFonts.poppins(
-                    fontSize: 12,
-                    fontWeight: FontWeight.w600,
+                  style: GoogleFonts.dmSans(
+                    fontSize: 11.5,
+                    fontWeight: FontWeight.w700,
                     color: filled ? Colors.white : color,
                   ),
                 ),
@@ -1034,25 +1315,25 @@ class _HistoryTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      margin: const EdgeInsets.only(bottom: 10),
-      padding: const EdgeInsets.all(14),
+      margin: const EdgeInsets.only(bottom: 8),
+      padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
         color: const Color(0xFFF8FBFB),
-        borderRadius: BorderRadius.circular(16),
+        borderRadius: BorderRadius.circular(14),
       ),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Container(
-            width: 10,
-            height: 10,
+            width: 8,
+            height: 8,
             margin: const EdgeInsets.only(top: 4),
             decoration: const BoxDecoration(
               color: AppColors.primary,
               shape: BoxShape.circle,
             ),
           ),
-          const SizedBox(width: 12),
+          const SizedBox(width: 10),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -1061,16 +1342,16 @@ class _HistoryTile extends StatelessWidget {
                   Text(
                     subtitle,
                     style: GoogleFonts.inter(
-                      fontSize: 11,
+                      fontSize: 10,
                       color: AppColors.textHint,
                     ),
                   ),
-                if (subtitle.isNotEmpty) const SizedBox(height: 4),
+                if (subtitle.isNotEmpty) const SizedBox(height: 3),
                 Text(
                   title,
                   style: GoogleFonts.inter(
-                    fontSize: 13,
-                    height: 1.5,
+                    fontSize: 12,
+                    height: 1.4,
                     color: AppColors.textPrimary,
                   ),
                 ),

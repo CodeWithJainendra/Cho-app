@@ -7,6 +7,8 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import '../models/doctor_model.dart';
 import '../utils/env_config.dart';
+import 'api_service.dart';
+import 'session_expiry_service.dart';
 
 class BookingService {
   static String get _baseUrl => EnvConfig.baseUrl;
@@ -71,7 +73,8 @@ class BookingService {
     return _extractMap(decoded);
   }
 
-  static Future<Map<String, dynamic>?> findPatientByMobile(String mobile) async {
+  static Future<Map<String, dynamic>?> findPatientByMobile(
+      String mobile) async {
     final response = await _send(
       method: 'GET',
       url: patientByMobileUrl(mobile),
@@ -122,11 +125,17 @@ class BookingService {
     );
 
     debugPrint('📡 getDoctors status: ${response.statusCode}');
-    debugPrint('📡 getDoctors body (first 500): ${response.body.length > 500 ? response.body.substring(0, 500) : response.body}');
+    debugPrint(
+        '📡 getDoctors body (first 500): ${response.body.length > 500 ? response.body.substring(0, 500) : response.body}');
+
+    if (response.statusCode == 401 || response.statusCode == 403) {
+      throw BookingApiException('Your session expired. Please sign in again.');
+    }
 
     if (!_isSuccess(response.statusCode)) {
       throw BookingApiException(
-        _extractMessage(response.body) ?? 'Failed to fetch doctors (HTTP ${response.statusCode}).',
+        _extractMessage(response.body) ??
+            'Failed to fetch doctors (HTTP ${response.statusCode}).',
       );
     }
 
@@ -141,16 +150,18 @@ class BookingService {
       if (data is List) {
         doctorsList = data;
       } else if (data is Map<String, dynamic>) {
-        doctorsList = (data['doctors'] ?? data['results'] ?? []) as List<dynamic>;
+        doctorsList =
+            (data['doctors'] ?? data['results'] ?? []) as List<dynamic>;
       } else {
-        doctorsList = (decoded['doctors'] ?? decoded['results'] ?? []) as List<dynamic>;
+        doctorsList =
+            (decoded['doctors'] ?? decoded['results'] ?? []) as List<dynamic>;
       }
       debugPrint('📡 getDoctors parsed ${doctorsList.length} doctors');
     }
 
     return doctorsList
-        .whereType<Map<String, dynamic>>()
-        .map((json) => Doctor.fromJson(json))
+        .whereType<Map>()
+        .map((json) => Doctor.fromJson(Map<String, dynamic>.from(json)))
         .toList();
   }
 
@@ -334,7 +345,8 @@ class BookingService {
     ]);
 
     if (txnId == null || txnId.isEmpty) {
-      throw const BookingApiException('Transaction ID missing in OTP response.');
+      throw const BookingApiException(
+          'Transaction ID missing in OTP response.');
     }
     return txnId;
   }
@@ -368,7 +380,8 @@ class BookingService {
     ]);
 
     if (token == null || token.isEmpty) {
-      throw const BookingApiException('Verification token missing in response.');
+      throw const BookingApiException(
+          'Verification token missing in response.');
     }
     return token;
   }
@@ -569,6 +582,25 @@ class BookingService {
 
       final response = await request.close();
       final responseBody = await response.transform(utf8.decoder).join();
+
+      if (response.statusCode == 401 || response.statusCode == 403) {
+        ApiService.sessionExpired = true;
+        SessionExpiryService.notifySessionExpired();
+        return _BookingResponse(
+          statusCode: 401,
+          body: responseBody,
+        );
+      }
+
+      if (_looksLikeExpiredSessionPayload(responseBody)) {
+        ApiService.sessionExpired = true;
+        SessionExpiryService.notifySessionExpired();
+        return _BookingResponse(
+          statusCode: 401,
+          body: responseBody,
+        );
+      }
+
       return _BookingResponse(
         statusCode: response.statusCode,
         body: responseBody,
@@ -608,10 +640,9 @@ class BookingService {
     // Encode body as raw bytes so the http package does NOT append
     // "; charset=utf-8" to our Content-Type header. This matches
     // exactly what JS fetch() sends: Content-Type: application/json
-    final List<int>? bodyBytes =
-        (body != null && method.toUpperCase() != 'GET')
-            ? utf8.encode(jsonEncode(body))
-            : null;
+    final List<int>? bodyBytes = (body != null && method.toUpperCase() != 'GET')
+        ? utf8.encode(jsonEncode(body))
+        : null;
 
     // Log the exact request for debugging
     debugPrint('═══ _sendExternal REQUEST ═══');
@@ -649,6 +680,56 @@ class BookingService {
 
   static bool _isSuccess(int statusCode) =>
       statusCode >= 200 && statusCode < 300;
+
+  static bool _looksLikeExpiredSessionPayload(String body) {
+    final trimmed = body.trim();
+    if (trimmed.isEmpty) return false;
+
+    final lower = trimmed.toLowerCase();
+
+    final looksLikeHtmlLogin = (lower.startsWith('<!doctype html') ||
+            lower.startsWith('<html') ||
+            lower.contains('<body')) &&
+        (lower.contains('login') ||
+            lower.contains('sign in') ||
+            lower.contains('session expired') ||
+            lower.contains('csrf') ||
+            lower.contains('unauthorized'));
+
+    if (looksLikeHtmlLogin) return true;
+
+    try {
+      final decoded = jsonDecode(trimmed);
+      if (decoded is Map) {
+        final message = [
+          decoded['message'],
+          decoded['error'],
+          decoded['detail'],
+          decoded['msg'],
+        ].whereType<String>().join(' ').toLowerCase();
+
+        if (message.contains('session expired') ||
+            message.contains('unauthorized') ||
+            message.contains('forbidden') ||
+            message.contains('login again') ||
+            message.contains('sign in again') ||
+            message.contains('authentication required')) {
+          return true;
+        }
+      }
+    } catch (_) {
+      if (lower.contains('session expired') ||
+          lower.contains('unauthorized') ||
+          lower.contains('forbidden') ||
+          lower.contains('login again') ||
+          lower.contains('sign in again') ||
+          lower.contains('/login')) {
+        return true;
+      }
+    }
+
+    return false;
+  }
 
   static dynamic _decodeJson(String body) {
     if (body.isEmpty) return null;

@@ -24,6 +24,7 @@ class Appointment {
   final int? patientId;
   final String? roomId;
   final int? doctorId;
+  final String? presLink;
 
   // Previous Observations / Vitals
   final double? spo2;
@@ -62,6 +63,7 @@ class Appointment {
     this.patientId,
     this.roomId,
     this.doctorId,
+    this.presLink,
     this.spo2,
     this.temperature,
     this.bloodPressure,
@@ -87,8 +89,10 @@ class Appointment {
     }
 
     // Parse vitals from nested objects
-    final vitals = json['vitals'] is Map ? json['vitals'] as Map<String, dynamic> : null;
-    final patient = json['patient'] is Map ? json['patient'] as Map<String, dynamic> : null;
+    final vitals =
+        json['vitals'] is Map ? json['vitals'] as Map<String, dynamic> : null;
+    final patient =
+        json['patient'] is Map ? json['patient'] as Map<String, dynamic> : null;
     final patientDetails = json['patient_details'] is Map
         ? json['patient_details'] as Map<String, dynamic>
         : json['patientDetails'] is Map
@@ -101,15 +105,37 @@ class Appointment {
 
     return Appointment(
       id: json['id'] ?? json['appointment_id'],
-      patientName: json['patient_name'] ?? json['patientName'] ?? json['name'] ?? patient?['name'] ?? patient?['patient_name'] ?? patientDetails?['name'] ?? patientDetails?['patient_name'],
-      patientPhone: json['patient_phone'] ?? json['patientPhone'] ?? json['phone'] ?? patient?['phone'] ?? patient?['mobile'] ?? patientDetails?['phone'] ?? patientDetails?['mobile'],
-      patientEmail: json['patient_email'] ?? json['patientEmail'] ?? json['email'] ?? patient?['email'] ?? patientDetails?['email'],
-      appointmentDate: json['appointment_date'] ?? json['appointmentDate'] ?? json['date'],
-      appointmentTime: json['appointment_time'] ?? json['appointmentTime'] ?? json['time'],
+      patientName: json['patient_name'] ??
+          json['patientName'] ??
+          json['name'] ??
+          patient?['name'] ??
+          patient?['patient_name'] ??
+          patientDetails?['name'] ??
+          patientDetails?['patient_name'],
+      patientPhone: json['patient_phone'] ??
+          json['patientPhone'] ??
+          json['phone'] ??
+          patient?['phone'] ??
+          patient?['mobile'] ??
+          patientDetails?['phone'] ??
+          patientDetails?['mobile'],
+      patientEmail: json['patient_email'] ??
+          json['patientEmail'] ??
+          json['email'] ??
+          patient?['email'] ??
+          patientDetails?['email'],
+      appointmentDate:
+          json['appointment_date'] ?? json['appointmentDate'] ?? json['date'],
+      appointmentTime:
+          json['appointment_time'] ?? json['appointmentTime'] ?? json['time'],
       status: json['status'] ?? 'Pending',
-      reason: json['reason'] ?? json['visit_reason'] ?? json['purpose'] ?? json['chief_complaints'],
+      reason: json['reason'] ??
+          json['visit_reason'] ??
+          json['purpose'] ??
+          json['chief_complaints'],
       doctorName: json['doctor_name'] ?? json['doctorName'],
-      villageName: json['village_name'] ?? json['villageName'] ?? json['village'],
+      villageName:
+          json['village_name'] ?? json['villageName'] ?? json['village'],
       subCenter: json['sub_center'] ?? json['subCenter'],
       choName: json['cho_name'] ?? json['choName'],
       choId: json['cho_id'] ?? json['choId'],
@@ -118,12 +144,21 @@ class Appointment {
       updatedAt: json['updated_at'] ?? json['updatedAt'],
       gender: json['gender'] ?? patient?['gender'] ?? patientDetails?['gender'],
       age: _parseInt(json['age'] ?? patient?['age'] ?? patientDetails?['age']),
-      address: json['address'] ?? patient?['address'] ?? patientDetails?['address'],
+      address:
+          json['address'] ?? patient?['address'] ?? patientDetails?['address'],
       tokenNumber: json['token_number'] ?? json['tokenNumber'] ?? json['token'],
-      appointmentType: json['appointment_type'] ?? json['appointmentType'] ?? json['type'],
-      abhaId: json['abha_id'] ?? json['abhaId'] ?? json['ABHA_ID'] ?? patient?['abha_id'] ?? patientDetails?['abha_id'] ?? patientDetails?['abhaId'],
+      appointmentType:
+          json['appointment_type'] ?? json['appointmentType'] ?? json['type'],
+      abhaId: json['abha_id'] ??
+          json['abhaId'] ??
+          json['ABHA_ID'] ??
+          patient?['abha_id'] ??
+          patientDetails?['abha_id'] ??
+          patientDetails?['abhaId'],
       roomId: (json['room_id'] ?? json['roomId'])?.toString(),
-      doctorId: _parseInt(json['doctor_id'] ?? json['doctorId'] ?? json['doctor']),
+      doctorId:
+          _parseInt(json['doctor_id'] ?? json['doctorId'] ?? json['doctor']),
+      presLink: (json['pres_link'] ?? json['presLink'] ?? json['pdf_url'] ?? json['pdfUrl'] ?? json['prescription_url'])?.toString(),
       patientId: _parseInt(
         json['patient_id'] ??
             json['patientId'] ??
@@ -138,11 +173,15 @@ class Appointment {
       ),
       spo2: _parseDouble(vitals?['spo2'] ?? json['spo2']),
       temperature: _parseDouble(vitals?['temperature'] ?? json['temperature']),
-      bloodPressure: vitals?['blood_pressure']?.toString() ?? json['blood_pressure']?.toString() ?? json['bp']?.toString(),
+      bloodPressure: vitals?['blood_pressure']?.toString() ??
+          json['blood_pressure']?.toString() ??
+          json['bp']?.toString(),
       height: _parseDouble(vitals?['height'] ?? json['height']),
       weight: _parseDouble(vitals?['weight'] ?? json['weight']),
       bmi: _parseDouble(vitals?['bmi'] ?? json['bmi']),
-      chiefComplaints: json['chief_complaints'] ?? json['chiefComplaints'] ?? vitals?['chief_complaints'],
+      chiefComplaints: json['chief_complaints'] ??
+          json['chiefComplaints'] ??
+          vitals?['chief_complaints'],
       previousObservations: prevObs,
       rawData: json,
     );
@@ -164,13 +203,15 @@ class Appointment {
   String get statusDisplay => (status ?? 'Pending').toUpperCase();
 
   bool get isPending =>
-      status?.toLowerCase() == 'pending' || status?.toLowerCase() == 'scheduled';
+      status?.toLowerCase() == 'pending' ||
+      status?.toLowerCase() == 'scheduled';
 
   bool get isCompleted =>
       status?.toLowerCase() == 'completed' || status?.toLowerCase() == 'done';
 
   bool get isCancelled =>
-      status?.toLowerCase() == 'cancelled' || status?.toLowerCase() == 'canceled';
+      status?.toLowerCase() == 'cancelled' ||
+      status?.toLowerCase() == 'canceled';
 
   String get initials {
     final name = patientName ?? 'P';
@@ -223,9 +264,11 @@ class LoginResponse {
         json['cho_id'];
 
     final userData = choMap ?? nestedData;
+    final hasUsableSessionData =
+        token != null || choId != null || userData != null;
 
     return LoginResponse(
-      success: isSuccess && token != null,
+      success: isSuccess && hasUsableSessionData,
       message: json['message'] ?? json['msg'] ?? json['error'],
       token: token?.toString(),
       userData: userData is Map<String, dynamic> ? userData : null,

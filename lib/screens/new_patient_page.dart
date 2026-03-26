@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:mobile_scanner/mobile_scanner.dart';
+import 'package:permission_handler/permission_handler.dart';
 
 import '../services/booking_service.dart';
 import '../utils/constants.dart';
@@ -8,8 +10,13 @@ import 'telemedicine_page.dart';
 
 class NewPatientPage extends StatefulWidget {
   final int choId;
+  final int initialTab;
 
-  const NewPatientPage({super.key, required this.choId});
+  const NewPatientPage({
+    super.key,
+    required this.choId,
+    this.initialTab = 0,
+  });
 
   @override
   State<NewPatientPage> createState() => _NewPatientPageState();
@@ -18,6 +25,7 @@ class NewPatientPage extends StatefulWidget {
 class _NewPatientPageState extends State<NewPatientPage>
     with SingleTickerProviderStateMixin {
   late final TabController _tabController;
+  late final MobileScannerController _qrController;
 
   final _mobileController = TextEditingController();
   final _abhaController = TextEditingController();
@@ -54,20 +62,44 @@ class _NewPatientPageState extends State<NewPatientPage>
   String? _otpTxnId;
   String? _mobileSearchTxnId;
   List<_MobileAbhaAccount> _mobileAccounts = const [];
+  bool _qrPermissionGranted = false;
+  bool _qrPermissionDeniedForever = false;
+  bool _isHandlingQrResult = false;
+  String? _lastScannedQrValue;
 
   @override
   void initState() {
     super.initState();
-    _tabController = TabController(length: 4, vsync: this)
-      ..addListener(() {
-        if (!_tabController.indexIsChanging) {
-          setState(() => _patientPreview = null);
+    _qrController = MobileScannerController(
+      formats: const [BarcodeFormat.qrCode],
+      detectionSpeed: DetectionSpeed.noDuplicates,
+    );
+    final initialTab = widget.initialTab.clamp(0, 3);
+    _tabController =
+        TabController(length: 4, vsync: this, initialIndex: initialTab)
+          ..addListener(() {
+            if (!_tabController.indexIsChanging) {
+              setState(() => _patientPreview = null);
+              if (_tabController.index == 2) {
+                _ensureQrPermissionAndStart();
+              } else {
+                _qrController.stop();
+              }
+            }
+          });
+
+    if (initialTab == 2) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) {
+          _ensureQrPermissionAndStart();
         }
       });
+    }
   }
 
   @override
   void dispose() {
+    _qrController.dispose();
     _tabController.dispose();
     _mobileController.dispose();
     _abhaController.dispose();
@@ -120,7 +152,8 @@ class _NewPatientPageState extends State<NewPatientPage>
 
         final accounts = accountsRaw
             .whereType<Map>()
-            .map((raw) => _MobileAbhaAccount.fromMap(Map<String, dynamic>.from(raw)))
+            .map((raw) =>
+                _MobileAbhaAccount.fromMap(Map<String, dynamic>.from(raw)))
             .where((account) => account.index != null)
             .toList();
 
@@ -146,7 +179,8 @@ class _NewPatientPageState extends State<NewPatientPage>
         rethrow;
       } catch (_) {
         // ABDM timed out or network error — fall through to local DB below.
-        debugPrint('⚠️ ABDM mobile search unavailable — falling back to local DB');
+        debugPrint(
+            '⚠️ ABDM mobile search unavailable — falling back to local DB');
       }
 
       if (!mounted) return;
@@ -244,6 +278,67 @@ class _NewPatientPageState extends State<NewPatientPage>
     }
   }
 
+  Future<void> _ensureQrPermissionAndStart() async {
+    final status = await Permission.camera.request();
+    if (!mounted) return;
+
+    final granted = status.isGranted;
+    final deniedForever = status.isPermanentlyDenied || status.isRestricted;
+
+    setState(() {
+      _qrPermissionGranted = granted;
+      _qrPermissionDeniedForever = deniedForever;
+    });
+
+    if (granted) {
+      await _qrController.start();
+    }
+  }
+
+  Future<void> _handleQrDetection(String rawValue) async {
+    if (_isHandlingQrResult) return;
+
+    final trimmed = rawValue.trim();
+    if (trimmed.isEmpty) return;
+
+    _isHandlingQrResult = true;
+    _lastScannedQrValue = trimmed;
+    await _qrController.stop();
+
+    final abhaId = _extractAbhaFromQr(trimmed);
+    if (!mounted) return;
+
+    if (abhaId == null) {
+      _showSnack('QR scanned, but no valid ABHA ID was found.');
+      _isHandlingQrResult = false;
+      await _qrController.start();
+      return;
+    }
+
+    _abhaController.text = abhaId;
+    _showSnack('QR scanned successfully. Verifying ABHA...');
+    _tabController.animateTo(1);
+    await _startAbhaVerification();
+    _isHandlingQrResult = false;
+  }
+
+  String? _extractAbhaFromQr(String rawValue) {
+    final abhaPattern = RegExp(r'\b\d{2}-\d{4}-\d{4}-\d{4}\b');
+    final directMatch = abhaPattern.firstMatch(rawValue);
+    if (directMatch != null) {
+      return directMatch.group(0);
+    }
+
+    final compactPattern = RegExp(r'\b\d{14}\b');
+    final compactMatch = compactPattern.firstMatch(rawValue);
+    if (compactMatch != null) {
+      final digits = compactMatch.group(0)!;
+      return '${digits.substring(0, 2)}-${digits.substring(2, 6)}-${digits.substring(6, 10)}-${digits.substring(10, 14)}';
+    }
+
+    return null;
+  }
+
   Future<void> _verifyOtp() async {
     final otp = _otpController.text.trim();
     if (otp.length != 6) {
@@ -280,7 +375,10 @@ class _NewPatientPageState extends State<NewPatientPage>
     final lastName = _lastNameController.text.trim();
     final age = _ageController.text.trim();
 
-    if (firstName.isEmpty || lastName.isEmpty || age.isEmpty || _gender == null) {
+    if (firstName.isEmpty ||
+        lastName.isEmpty ||
+        age.isEmpty ||
+        _gender == null) {
       _showSnack('Fill first name, last name, age and gender.');
       return;
     }
@@ -349,7 +447,8 @@ class _NewPatientPageState extends State<NewPatientPage>
     setState(() => _isBusy = true);
     try {
       if (vitalsPayload.isNotEmpty) {
-        await BookingService.updatePatientVitals(patient.patientId, vitalsPayload);
+        await BookingService.updatePatientVitals(
+            patient.patientId, vitalsPayload);
       }
 
       if (!mounted) return;
@@ -393,9 +492,18 @@ class _NewPatientPageState extends State<NewPatientPage>
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: const Color(0xFFF5F8FA),
+      bottomNavigationBar: SafeArea(
+        top: false,
+        minimum: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+        child: Material(
+          color: Colors.transparent,
+          child: _buildCreateAbhaFooter(),
+        ),
+      ),
       body: Stack(
         children: [
           SafeArea(
+            bottom: false,
             child: Column(
               children: [
                 _buildHeader(),
@@ -410,10 +518,6 @@ class _NewPatientPageState extends State<NewPatientPage>
                       _buildManualTab(),
                     ],
                   ),
-                ),
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
-                  child: _buildCreateAbhaFooter(),
                 ),
               ],
             ),
@@ -433,13 +537,8 @@ class _NewPatientPageState extends State<NewPatientPage>
   }
 
   Widget _buildHeader() {
-    return Container(
-      margin: const EdgeInsets.fromLTRB(16, 12, 16, 12),
-      padding: const EdgeInsets.fromLTRB(14, 10, 14, 10),
-      decoration: BoxDecoration(
-        gradient: AppColors.headerGradient,
-        borderRadius: BorderRadius.circular(18),
-      ),
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 10, 16, 10),
       child: Row(
         children: [
           IconButton(
@@ -447,27 +546,15 @@ class _NewPatientPageState extends State<NewPatientPage>
             constraints: const BoxConstraints(minWidth: 34, minHeight: 34),
             padding: const EdgeInsets.all(6),
             style: IconButton.styleFrom(
-              backgroundColor: Colors.white.withValues(alpha: 0.14),
+              backgroundColor: Colors.white,
+              foregroundColor: AppColors.textPrimary,
+              side: const BorderSide(color: AppColors.cardBorder),
             ),
             icon: const Icon(
               Icons.arrow_back_ios_new_rounded,
-              color: Colors.white,
               size: 16,
             ),
           ),
-          Expanded(
-            child: Center(
-              child: Text(
-                'Book Appointment',
-                style: GoogleFonts.poppins(
-                  fontSize: 16,
-                  fontWeight: FontWeight.w600,
-                  color: Colors.white,
-                ),
-              ),
-            ),
-          ),
-          const SizedBox(width: 34),
         ],
       ),
     );
@@ -476,10 +563,21 @@ class _NewPatientPageState extends State<NewPatientPage>
   Widget _buildTabs() {
     return Container(
       margin: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+      padding: const EdgeInsets.all(4),
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: AppColors.cardBorder),
+        border: Border.all(
+          color: AppColors.primary.withValues(alpha: 0.18),
+          width: 1.15,
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: AppColors.primary.withValues(alpha: 0.04),
+            blurRadius: 10,
+            offset: const Offset(0, 3),
+          ),
+        ],
       ),
       child: TabBar(
         controller: _tabController,
@@ -489,9 +587,10 @@ class _NewPatientPageState extends State<NewPatientPage>
         dividerColor: Colors.transparent,
         labelColor: AppColors.primary,
         unselectedLabelColor: AppColors.textSecondary,
-        labelStyle: GoogleFonts.inter(fontSize: 12, fontWeight: FontWeight.w700),
+        labelStyle:
+            GoogleFonts.inter(fontSize: 11, fontWeight: FontWeight.w700),
         unselectedLabelStyle:
-            GoogleFonts.inter(fontSize: 12, fontWeight: FontWeight.w500),
+            GoogleFonts.inter(fontSize: 11, fontWeight: FontWeight.w500),
         tabs: const [
           Tab(text: 'Mobile'),
           Tab(text: 'ABHA'),
@@ -516,10 +615,11 @@ class _NewPatientPageState extends State<NewPatientPage>
                   child: TextField(
                     controller: _mobileController,
                     keyboardType: TextInputType.phone,
-                    decoration: _inputDecoration('Enter 10-digit mobile number'),
+                    decoration:
+                        _inputDecoration('Enter 10-digit mobile number'),
                   ),
                 ),
-                const SizedBox(height: 16),
+                const SizedBox(height: 12),
                 Align(
                   alignment: Alignment.centerRight,
                   child: ElevatedButton(
@@ -555,7 +655,7 @@ class _NewPatientPageState extends State<NewPatientPage>
                     decoration: _inputDecoration('XX-XXXX-XXXX-XXXX'),
                   ),
                 ),
-                const SizedBox(height: 16),
+                const SizedBox(height: 12),
                 Align(
                   alignment: Alignment.centerRight,
                   child: ElevatedButton(
@@ -581,49 +681,140 @@ class _NewPatientPageState extends State<NewPatientPage>
         children: [
           _SectionCard(
             title: 'QR Scan',
-            subtitle: 'Use ABHA or Manual flow right now. Live QR capture is not connected yet.',
+            subtitle: 'Allow camera access and scan the patient ABHA QR code.',
             child: Column(
               children: [
-                Container(
-                  width: double.infinity,
-                  padding: const EdgeInsets.all(28),
-                  decoration: BoxDecoration(
-                    color: const Color(0xFFF8FBFB),
-                    borderRadius: BorderRadius.circular(18),
-                    border: Border.all(
-                      color: AppColors.primary.withValues(alpha: 0.25),
-                      style: BorderStyle.solid,
+                if (_qrPermissionGranted)
+                  Container(
+                    width: double.infinity,
+                    height: 260,
+                    clipBehavior: Clip.antiAlias,
+                    decoration: BoxDecoration(
+                      color: Colors.black,
+                      borderRadius: BorderRadius.circular(18),
+                      border: Border.all(
+                        color: AppColors.primary.withValues(alpha: 0.28),
+                      ),
+                    ),
+                    child: Stack(
+                      children: [
+                        MobileScanner(
+                          controller: _qrController,
+                          onDetect: (capture) {
+                            final code = capture.barcodes.isNotEmpty
+                                ? capture.barcodes.first.rawValue
+                                : null;
+                            if (code != null) {
+                              _handleQrDetection(code);
+                            }
+                          },
+                        ),
+                        Center(
+                          child: Container(
+                            width: 180,
+                            height: 180,
+                            decoration: BoxDecoration(
+                              borderRadius: BorderRadius.circular(18),
+                              border: Border.all(
+                                color: Colors.white.withValues(alpha: 0.85),
+                                width: 2,
+                              ),
+                            ),
+                          ),
+                        ),
+                        Positioned(
+                          left: 12,
+                          right: 12,
+                          bottom: 12,
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 12,
+                              vertical: 10,
+                            ),
+                            decoration: BoxDecoration(
+                              color: Colors.black.withValues(alpha: 0.55),
+                              borderRadius: BorderRadius.circular(14),
+                            ),
+                            child: Text(
+                              'Align the ABHA QR code inside the frame.',
+                              textAlign: TextAlign.center,
+                              style: GoogleFonts.inter(
+                                fontSize: 11.5,
+                                color: Colors.white,
+                                fontWeight: FontWeight.w500,
+                              ),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  )
+                else
+                  Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.all(22),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFF8FBFB),
+                      borderRadius: BorderRadius.circular(18),
+                      border: Border.all(
+                        color: AppColors.primary.withValues(alpha: 0.25),
+                      ),
+                    ),
+                    child: Column(
+                      children: [
+                        Icon(
+                          Icons.qr_code_scanner_rounded,
+                          size: 46,
+                          color: AppColors.primary,
+                        ),
+                        const SizedBox(height: 10),
+                        Text(
+                          _qrPermissionDeniedForever
+                              ? 'Camera access blocked'
+                              : 'Camera permission required',
+                          style: GoogleFonts.poppins(
+                            fontSize: 16,
+                            fontWeight: FontWeight.w600,
+                            color: AppColors.textPrimary,
+                          ),
+                        ),
+                        const SizedBox(height: 6),
+                        Text(
+                          _qrPermissionDeniedForever
+                              ? 'Enable camera permission from app settings to scan the ABHA QR code.'
+                              : 'Tap below to allow camera access and start scanning.',
+                          textAlign: TextAlign.center,
+                          style: GoogleFonts.inter(
+                            fontSize: 12,
+                            height: 1.45,
+                            color: AppColors.textSecondary,
+                          ),
+                        ),
+                        const SizedBox(height: 14),
+                        ElevatedButton(
+                          onPressed: _qrPermissionDeniedForever
+                              ? openAppSettings
+                              : _ensureQrPermissionAndStart,
+                          child: Text(
+                            _qrPermissionDeniedForever
+                                ? 'Open Settings'
+                                : 'Allow Camera & Scan',
+                          ),
+                        ),
+                      ],
                     ),
                   ),
-                  child: Column(
-                    children: [
-                      Icon(
-                        Icons.qr_code_scanner_rounded,
-                        size: 56,
-                        color: AppColors.primary,
-                      ),
-                      const SizedBox(height: 12),
-                      Text(
-                        'QR Flow',
-                        style: GoogleFonts.poppins(
-                          fontSize: 18,
-                          fontWeight: FontWeight.w600,
-                          color: AppColors.textPrimary,
-                        ),
-                      ),
-                      const SizedBox(height: 6),
-                      Text(
-                        'This tab is reserved for live QR scanning. Until the camera scanner is added, use the ABHA tab for the same verification flow.',
-                        textAlign: TextAlign.center,
-                        style: GoogleFonts.inter(
-                          fontSize: 13,
-                          height: 1.5,
-                          color: AppColors.textSecondary,
-                        ),
-                      ),
-                    ],
+                if (_lastScannedQrValue?.isNotEmpty == true) ...[
+                  const SizedBox(height: 10),
+                  Text(
+                    'Last scanned: $_lastScannedQrValue',
+                    textAlign: TextAlign.center,
+                    style: GoogleFonts.inter(
+                      fontSize: 11.5,
+                      color: AppColors.textSecondary,
+                    ),
                   ),
-                ),
+                ],
               ],
             ),
           ),
@@ -694,7 +885,8 @@ class _NewPatientPageState extends State<NewPatientPage>
                       decoration: _inputDecoration('Select gender'),
                       items: const [
                         DropdownMenuItem(value: 'Male', child: Text('Male')),
-                        DropdownMenuItem(value: 'Female', child: Text('Female')),
+                        DropdownMenuItem(
+                            value: 'Female', child: Text('Female')),
                         DropdownMenuItem(value: 'Other', child: Text('Other')),
                       ],
                       onChanged: (value) => setState(() => _gender = value),
@@ -774,7 +966,8 @@ class _NewPatientPageState extends State<NewPatientPage>
                     label: 'Temperature',
                     child: TextField(
                       controller: _temperatureController,
-                      keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                      keyboardType:
+                          const TextInputType.numberWithOptions(decimal: true),
                       decoration: _inputDecoration('98.6'),
                     ),
                   ),
@@ -804,7 +997,8 @@ class _NewPatientPageState extends State<NewPatientPage>
                     label: 'Height (cm)',
                     child: TextField(
                       controller: _heightController,
-                      keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                      keyboardType:
+                          const TextInputType.numberWithOptions(decimal: true),
                       decoration: _inputDecoration('170'),
                     ),
                   ),
@@ -812,7 +1006,8 @@ class _NewPatientPageState extends State<NewPatientPage>
                     label: 'Weight (kg)',
                     child: TextField(
                       controller: _weightController,
-                      keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                      keyboardType:
+                          const TextInputType.numberWithOptions(decimal: true),
                       decoration: _inputDecoration('65'),
                     ),
                   ),
@@ -823,7 +1018,8 @@ class _NewPatientPageState extends State<NewPatientPage>
                   child: TextField(
                     controller: _complaintsController,
                     maxLines: 4,
-                    decoration: _inputDecoration('Describe complaints or symptoms'),
+                    decoration:
+                        _inputDecoration('Describe complaints or symptoms'),
                   ),
                 ),
                 const SizedBox(height: 16),
@@ -857,8 +1053,12 @@ class _NewPatientPageState extends State<NewPatientPage>
           _InfoRow(label: 'Name', value: patient.name),
           _InfoRow(label: 'Age', value: '${patient.age} years'),
           _InfoRow(label: 'Gender', value: patient.gender),
-          _InfoRow(label: 'Phone', value: patient.phone.isEmpty ? '—' : patient.phone),
-          _InfoRow(label: 'Email', value: patient.email.isEmpty ? '—' : patient.email),
+          _InfoRow(
+              label: 'Phone',
+              value: patient.phone.isEmpty ? '—' : patient.phone),
+          _InfoRow(
+              label: 'Email',
+              value: patient.email.isEmpty ? '—' : patient.email),
           _InfoRow(label: 'ABHA ID', value: patient.abhaId),
           const SizedBox(height: 18),
           SizedBox(
@@ -945,42 +1145,42 @@ class _NewPatientPageState extends State<NewPatientPage>
   Widget _buildCreateAbhaFooter() {
     return Container(
       width: double.infinity,
-      padding: const EdgeInsets.all(18),
+      padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 14),
       decoration: BoxDecoration(
         color: Colors.white,
-        borderRadius: BorderRadius.circular(20),
+        borderRadius: BorderRadius.circular(18),
         border: Border.all(color: AppColors.cardBorder),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.03),
+            blurRadius: 10,
+            offset: const Offset(0, 3),
+          ),
+        ],
       ),
-      child: Column(
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.center,
+        mainAxisSize: MainAxisSize.min,
         children: [
-          Text(
-            'Need to create a fresh ABHA account for the patient?',
-            textAlign: TextAlign.center,
-            style: GoogleFonts.inter(
-              fontSize: 11.5,
-              height: 1.5,
-              color: AppColors.textSecondary,
+          Flexible(
+            child: Text(
+              "Don't have ABHA Number? ",
+              textAlign: TextAlign.center,
+              style: GoogleFonts.inter(
+                fontSize: 12,
+                height: 1.45,
+                color: AppColors.textSecondary,
+              ),
             ),
           ),
-          const SizedBox(height: 12),
-          SizedBox(
-            width: double.infinity,
-            height: 50,
-            child: OutlinedButton(
-              onPressed: _openCreateAbhaPage,
-              style: OutlinedButton.styleFrom(
-                side: const BorderSide(color: AppColors.primary),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(16),
-                ),
-                foregroundColor: AppColors.primary,
-              ),
-              child: Text(
-                'Create ABHA Account',
-                style: GoogleFonts.inter(
-                  fontSize: 12.5,
-                  fontWeight: FontWeight.w700,
-                ),
+          GestureDetector(
+            onTap: _openCreateAbhaPage,
+            child: Text(
+              'Create ABHA',
+              style: GoogleFonts.inter(
+                fontSize: 12.5,
+                fontWeight: FontWeight.w700,
+                color: AppColors.primary,
               ),
             ),
           ),
@@ -1044,7 +1244,9 @@ class _NewPatientPageState extends State<NewPatientPage>
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
                             Text(
-                              account.name.isEmpty ? 'ABHA Account' : account.name,
+                              account.name.isEmpty
+                                  ? 'ABHA Account'
+                                  : account.name,
                               style: GoogleFonts.inter(
                                 fontSize: 14,
                                 fontWeight: FontWeight.w700,
@@ -1087,21 +1289,22 @@ class _NewPatientPageState extends State<NewPatientPage>
     return InputDecoration(
       hintText: hint,
       hintStyle: GoogleFonts.inter(
-        fontSize: 13,
+        fontSize: 12,
         color: AppColors.textHint,
       ),
       filled: true,
       fillColor: const Color(0xFFF8FBFB),
+      contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 13),
       border: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(16),
+        borderRadius: BorderRadius.circular(14),
         borderSide: BorderSide.none,
       ),
       enabledBorder: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(16),
+        borderRadius: BorderRadius.circular(14),
         borderSide: BorderSide(color: AppColors.cardBorder),
       ),
       focusedBorder: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(16),
+        borderRadius: BorderRadius.circular(14),
         borderSide: const BorderSide(color: AppColors.primary, width: 1.2),
       ),
     );
@@ -1118,7 +1321,7 @@ class _NewPatientPageState extends State<NewPatientPage>
           return Column(
             children: [
               left,
-              const SizedBox(height: 14),
+              const SizedBox(height: 12),
               right,
             ],
           );
@@ -1184,7 +1387,8 @@ class _NewPatientPageState extends State<NewPatientPage>
       accountToken: verifyToken,
     );
 
-    final abhaId = (account['ABHANumber'] ?? account['abhaId'] ?? '').toString();
+    final abhaId =
+        (account['ABHANumber'] ?? account['abhaId'] ?? '').toString();
     if (abhaId.isEmpty) {
       throw const BookingApiException('ABHA account data is incomplete.');
     }
@@ -1238,7 +1442,8 @@ class _NewPatientPageState extends State<NewPatientPage>
           (patientDetails['ABHANumber'] ?? patientDetails['abhaId'] ?? '')
               .toString();
       if (abhaId.isEmpty) {
-        throw const BookingApiException('Verified patient details are incomplete.');
+        throw const BookingApiException(
+            'Verified patient details are incomplete.');
       }
 
       final existingPatient = await BookingService.findPatientByAbha(abhaId);
@@ -1271,7 +1476,8 @@ class _NewPatientPageState extends State<NewPatientPage>
       return;
     }
 
-    throw const BookingApiException('No verified patient data returned from OTP.');
+    throw const BookingApiException(
+        'No verified patient data returned from OTP.');
   }
 
   _PatientPreview _patientFromExistingPatient(
@@ -1483,7 +1689,8 @@ class _NewPatientPageState extends State<NewPatientPage>
     final dob = DateTime(birthYear, birthMonth, birthDay);
     final now = DateTime.now();
     var years = now.year - dob.year;
-    if (now.month < dob.month || (now.month == dob.month && now.day < dob.day)) {
+    if (now.month < dob.month ||
+        (now.month == dob.month && now.day < dob.day)) {
       years--;
     }
     return years.toString();
@@ -1553,7 +1760,7 @@ class _BookingBody extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return SingleChildScrollView(
-      padding: const EdgeInsets.fromLTRB(16, 0, 16, 32),
+      padding: const EdgeInsets.fromLTRB(16, 0, 16, 24),
       child: child,
     );
   }
@@ -1574,16 +1781,16 @@ class _SectionCard extends StatelessWidget {
   Widget build(BuildContext context) {
     return Container(
       width: double.infinity,
-      padding: const EdgeInsets.all(18),
+      padding: const EdgeInsets.all(15),
       decoration: BoxDecoration(
         color: Colors.white,
-        borderRadius: BorderRadius.circular(22),
+        borderRadius: BorderRadius.circular(20),
         border: Border.all(color: AppColors.cardBorder),
         boxShadow: [
           BoxShadow(
             color: Colors.black.withValues(alpha: 0.04),
-            blurRadius: 14,
-            offset: const Offset(0, 6),
+            blurRadius: 10,
+            offset: const Offset(0, 4),
           ),
         ],
       ),
@@ -1593,21 +1800,21 @@ class _SectionCard extends StatelessWidget {
           Text(
             title,
             style: GoogleFonts.poppins(
-              fontSize: 18,
+              fontSize: 16,
               fontWeight: FontWeight.w600,
               color: AppColors.textPrimary,
             ),
           ),
-          const SizedBox(height: 6),
+          const SizedBox(height: 4),
           Text(
             subtitle,
             style: GoogleFonts.inter(
-              fontSize: 13,
-              height: 1.5,
+              fontSize: 12,
+              height: 1.4,
               color: AppColors.textSecondary,
             ),
           ),
-          const SizedBox(height: 18),
+          const SizedBox(height: 14),
           child,
         ],
       ),
@@ -1629,12 +1836,12 @@ class _LabeledField extends StatelessWidget {
         Text(
           label,
           style: GoogleFonts.inter(
-            fontSize: 13,
+            fontSize: 12,
             fontWeight: FontWeight.w600,
             color: AppColors.textPrimary,
           ),
         ),
-        const SizedBox(height: 8),
+        const SizedBox(height: 6),
         child,
       ],
     );
@@ -1650,7 +1857,7 @@ class _InfoRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      padding: const EdgeInsets.symmetric(vertical: 10),
+      padding: const EdgeInsets.symmetric(vertical: 8),
       decoration: const BoxDecoration(
         border: Border(bottom: BorderSide(color: AppColors.cardBorder)),
       ),
@@ -1662,7 +1869,7 @@ class _InfoRow extends StatelessWidget {
             child: Text(
               label,
               style: GoogleFonts.inter(
-                fontSize: 13,
+                fontSize: 12,
                 color: AppColors.textSecondary,
                 fontWeight: FontWeight.w500,
               ),
@@ -1672,8 +1879,8 @@ class _InfoRow extends StatelessWidget {
             child: Text(
               value,
               style: GoogleFonts.inter(
-                fontSize: 13,
-                height: 1.5,
+                fontSize: 12,
+                height: 1.4,
                 color: AppColors.textPrimary,
                 fontWeight: FontWeight.w600,
               ),

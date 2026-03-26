@@ -47,7 +47,8 @@ class VideoConsultationPage extends StatefulWidget {
   State<VideoConsultationPage> createState() => _VideoConsultationPageState();
 }
 
-class _VideoConsultationPageState extends State<VideoConsultationPage> {
+class _VideoConsultationPageState extends State<VideoConsultationPage>
+    with TickerProviderStateMixin {
   final _vc = VideoCallService.instance;
 
   final _localRenderer = RTCVideoRenderer();
@@ -97,6 +98,13 @@ class _VideoConsultationPageState extends State<VideoConsultationPage> {
   int _unreadCount = 0;
   final Set<String> _seenMessageKeys = {};
 
+  // ── Controls whether PopScope allows the route to pop ──
+  bool _allowPop = false;
+
+  // ── Pulse animation for waiting state ──
+  late final AnimationController _pulseCtrl;
+  late final Animation<double> _pulseAnim;
+
   // ── Draggable PIP state (matching RN PanResponder) ───────
   late double _pipX;
   late double _pipY;
@@ -110,6 +118,15 @@ class _VideoConsultationPageState extends State<VideoConsultationPage> {
   @override
   void initState() {
     super.initState();
+
+    // Pulse animation for the waiting-for-doctor state
+    _pulseCtrl = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 1800),
+    )..repeat(reverse: true);
+    _pulseAnim = Tween<double>(begin: 0.85, end: 1.15).animate(
+      CurvedAnimation(parent: _pulseCtrl, curve: Curves.easeInOut),
+    );
 
     // This screen has a full-black background — use light (white) status bar
     // icons so they are visible.  Restored to dark icons in dispose().
@@ -146,6 +163,7 @@ class _VideoConsultationPageState extends State<VideoConsultationPage> {
   @override
   void dispose() {
     debugPrint('📞 VideoConsultation: disposing...');
+    _pulseCtrl.dispose();
     // Restore dark status bar icons for the light-coloured screens we return to.
     SystemChrome.setSystemUIOverlayStyle(SystemUiOverlayStyle.dark);
     _controlsTimer?.cancel();
@@ -619,12 +637,17 @@ class _VideoConsultationPageState extends State<VideoConsultationPage> {
       if (!mounted) return;
       showDialog(
         context: context,
+        barrierDismissible: false,
         builder: (ctx) => AlertDialog(
           title: const Text('Participant Left'),
           content: const Text('The other participant has left the call.'),
           actions: [
             TextButton(
-              onPressed: () => Navigator.pop(ctx),
+              onPressed: () {
+                Navigator.pop(ctx); // dismiss dialog
+                _vc.disconnect();
+                _popPage();
+              },
               child: const Text('OK'),
             ),
           ],
@@ -661,7 +684,7 @@ class _VideoConsultationPageState extends State<VideoConsultationPage> {
     _notificationSub?.cancel();
     _consentTimeoutTimer?.cancel();
     _vc.disconnect();
-    if (mounted) Navigator.pop(context);
+    _popPage();
   }
 
   void _createOfferIfNeeded() {
@@ -987,6 +1010,15 @@ class _VideoConsultationPageState extends State<VideoConsultationPage> {
     }
   }
 
+  /// Safely pop this page by first allowing PopScope, then popping after rebuild.
+  void _popPage() {
+    if (!mounted) return;
+    setState(() => _allowPop = true);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) Navigator.pop(context);
+    });
+  }
+
   // ── End call (matching RN handleEndCall) ─────────────────
 
   void _handleEndCall() {
@@ -1015,13 +1047,13 @@ class _VideoConsultationPageState extends State<VideoConsultationPage> {
           ),
           ElevatedButton(
             onPressed: () {
-              Navigator.pop(ctx);
+              Navigator.pop(ctx); // dismiss dialog
               _messages.clear(); // matching RN clearMessages()
               // Use disconnect() (full teardown: leaveRoom + socket close).
               // The widget's dispose() will also fire after Navigator.pop,
               // but disconnect() is idempotent, so double-calling is safe.
               _vc.disconnect();
-              Navigator.pop(context);
+              _popPage();
             },
             style: ElevatedButton.styleFrom(
               backgroundColor: const Color(0xFFFF5252),
@@ -1160,7 +1192,7 @@ class _VideoConsultationPageState extends State<VideoConsultationPage> {
   Widget build(BuildContext context) {
     // Hardware back button = end call (matching RN BackHandler)
     return PopScope(
-      canPop: false,
+      canPop: _allowPop,
       onPopInvokedWithResult: (didPop, _) {
         if (!didPop) _handleEndCall();
       },
@@ -1192,17 +1224,10 @@ class _VideoConsultationPageState extends State<VideoConsultationPage> {
                 _buildControls(),
 
               // ── Status / join section (centre) ───────────
-              // Only show when NOT actively connecting — when _connecting=true
-              // the _buildConnectingOverlay() already owns the centre of the screen
-              // (spinner + Cancel button). Showing BOTH overlays simultaneously
-              // hides the spinner behind the status box and makes the screen look
-              // like a pure-black screen with no feedback.
-              if (!_connected && !_connecting)
+              // Only show when not connecting and not in the waiting state
+              // (the placeholder already shows status + cancel when waiting).
+              if (!_connected && !_connecting && !_waitingForDoctorResponse && !_hasRequestedConsent)
                 _buildStatusSection(),
-
-              // ── Visible waiting overlay for request state ─
-              if (_waitingForDoctorResponse && !_connecting)
-                _buildDoctorRequestOverlay(),
 
               // ── Draggable local PIP ──────────────────────
               if (_localRenderer.srcObject != null) _buildLocalPIP(),
@@ -1294,46 +1319,131 @@ class _VideoConsultationPageState extends State<VideoConsultationPage> {
   }
 
   Widget _buildDoctorPlaceholder() {
+    final isWaiting = _waitingForDoctorResponse || _hasRequestedConsent;
+
     return Container(
       decoration: const BoxDecoration(
         gradient: LinearGradient(
           begin: Alignment.topCenter,
           end: Alignment.bottomCenter,
-          colors: [Color(0xFF1A1A2E), Color(0xFF16213E), Color(0xFF0F3460)],
+          colors: [Color(0xFF0F172A), Color(0xFF1E293B), Color(0xFF0F3460)],
         ),
       ),
-      child: Center(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Container(
-              width: 90,
-              height: 90,
-              decoration: BoxDecoration(
-                color: Colors.white.withValues(alpha: 0.1),
-                shape: BoxShape.circle,
-              ),
-              child: Center(
-                child: Text(
-                  _getInitials(_displayDoctorName),
-                  style: GoogleFonts.poppins(
-                    fontSize: 30,
-                    fontWeight: FontWeight.w700,
-                    color: Colors.white.withValues(alpha: 0.6),
+      child: SafeArea(
+        child: Center(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              // ── Pulsating avatar ring ──
+              AnimatedBuilder(
+                animation: _pulseAnim,
+                builder: (_, child) {
+                  return Transform.scale(
+                    scale: isWaiting ? _pulseAnim.value : 1.0,
+                    child: child,
+                  );
+                },
+                child: Container(
+                  width: 120,
+                  height: 120,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    border: Border.all(
+                      color: isWaiting
+                          ? const Color(0xFF10B981)
+                          : Colors.white.withValues(alpha: 0.2),
+                      width: isWaiting ? 3.5 : 2,
+                    ),
+                    boxShadow: isWaiting
+                        ? [
+                            BoxShadow(
+                              color: const Color(0xFF10B981).withValues(alpha: 0.3),
+                              blurRadius: 24,
+                              spreadRadius: 4,
+                            ),
+                          ]
+                        : null,
+                  ),
+                  child: Container(
+                    margin: const EdgeInsets.all(4),
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      color: Colors.white.withValues(alpha: 0.1),
+                    ),
+                    child: Center(
+                      child: Text(
+                        _getInitials(_displayDoctorName),
+                        style: GoogleFonts.poppins(
+                          fontSize: 36,
+                          fontWeight: FontWeight.w700,
+                          color: Colors.white.withValues(alpha: 0.8),
+                        ),
+                      ),
+                    ),
                   ),
                 ),
               ),
-            ),
-            const SizedBox(height: 14),
-            Text(
-              _displayDoctorName,
-              style: GoogleFonts.poppins(
-                fontSize: 16,
-                fontWeight: FontWeight.w600,
-                color: Colors.white.withValues(alpha: 0.7),
+              const SizedBox(height: 20),
+              Text(
+                _displayDoctorName,
+                style: GoogleFonts.poppins(
+                  fontSize: 20,
+                  fontWeight: FontWeight.w600,
+                  color: Colors.white,
+                ),
               ),
-            ),
-          ],
+              const SizedBox(height: 28),
+              // ── Status indicator ──
+              if (isWaiting) ...[
+                const SizedBox(
+                  width: 32,
+                  height: 32,
+                  child: CircularProgressIndicator(
+                    color: Color(0xFF10B981),
+                    strokeWidth: 3,
+                  ),
+                ),
+                const SizedBox(height: 16),
+                Text(
+                  _getStatusText(),
+                  textAlign: TextAlign.center,
+                  style: GoogleFonts.inter(
+                    fontSize: 16,
+                    fontWeight: FontWeight.w500,
+                    color: Colors.white,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  _waitingForDoctorResponse
+                      ? 'Please keep this screen open'
+                      : 'Setting up your consultation...',
+                  textAlign: TextAlign.center,
+                  style: GoogleFonts.inter(
+                    fontSize: 13,
+                    color: Colors.white.withValues(alpha: 0.6),
+                  ),
+                ),
+                const SizedBox(height: 32),
+                // Cancel button during waiting
+                TextButton.icon(
+                  onPressed: _cancelCall,
+                  icon: const Icon(Icons.close_rounded, size: 18),
+                  label: Text('Cancel',
+                      style: GoogleFonts.inter(
+                          fontSize: 14, fontWeight: FontWeight.w500)),
+                  style: TextButton.styleFrom(
+                    foregroundColor: Colors.white.withValues(alpha: 0.7),
+                    backgroundColor: Colors.white.withValues(alpha: 0.1),
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 28, vertical: 10),
+                    shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(24)),
+                  ),
+                ),
+              ],
+            ],
+          ),
         ),
       ),
     );
@@ -1718,50 +1828,6 @@ class _VideoConsultationPageState extends State<VideoConsultationPage> {
     );
   }
 
-  Widget _buildDoctorRequestOverlay() {
-    return Positioned.fill(
-      child: IgnorePointer(
-        child: Container(
-          color: Colors.black.withValues(alpha: 0.18),
-          child: Align(
-            alignment: Alignment.topCenter,
-            child: Container(
-              margin: const EdgeInsets.only(top: 72),
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-              decoration: BoxDecoration(
-                color: const Color(0xFF0F172A).withValues(alpha: 0.92),
-                borderRadius: BorderRadius.circular(18),
-                border: Border.all(color: Colors.white.withValues(alpha: 0.16)),
-              ),
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  const SizedBox(
-                    width: 18,
-                    height: 18,
-                    child: CircularProgressIndicator(
-                      color: Colors.white,
-                      strokeWidth: 2.2,
-                    ),
-                  ),
-                  const SizedBox(width: 12),
-                  Text(
-                    'Waiting for doctor response',
-                    style: GoogleFonts.inter(
-                      fontSize: 13,
-                      fontWeight: FontWeight.w600,
-                      color: Colors.white,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-
   /// Draggable local PIP (matching RN Animated.View + PanResponder)
   Widget _buildLocalPIP() {
     return Positioned(
@@ -1871,7 +1937,7 @@ class _VideoConsultationPageState extends State<VideoConsultationPage> {
                 ElevatedButton(
                   onPressed: () {
                     _vc.disconnect();
-                    Navigator.pop(context);
+                    _popPage();
                   },
                   style: ElevatedButton.styleFrom(
                     backgroundColor: const Color(0xFFFF5252),

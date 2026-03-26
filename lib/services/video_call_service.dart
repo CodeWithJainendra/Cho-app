@@ -240,7 +240,12 @@ class VideoCallService {
           _handleCandidate(msg);
           break;
         case 'chat':
-          debugPrint('💬 VideoCall: chat message received');
+        case 'document':
+        case 'text':
+          // DoctorsApp spreads messageData AFTER type:'chat', so the original
+          // type ('document' / 'text') may override it.  Treat all three as
+          // chat messages so PDFs and texts are forwarded to the chat panel.
+          debugPrint('💬 VideoCall: chat message received (type=$type)');
           chatMessageCallback?.call(msg);
           break;
       }

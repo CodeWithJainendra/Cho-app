@@ -5,32 +5,36 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../models/appointment_model.dart';
 import '../utils/env_config.dart';
 import 'encryption_service.dart';
+import 'session_expiry_service.dart';
 
 class ApiService {
+  static const String _loggedInKey = 'has_active_session';
   static String? _authToken;
   static String? _sessionId;
-  static String? _cookieHeader; // Clean "name=value; name2=value2" for Cookie header
+  static String?
+      _cookieHeader; // Clean "name=value; name2=value2" for Cookie header
   static Map<String, dynamic>? _userData;
   static int? _choId;
 
   // ─── Headers — mimic browser-native headers for server fingerprinting ──
   static Map<String, String> get _apiHeaders => {
-    'accept': 'application/json',
-    'Content-Type': 'application/json',
-    'Origin': EnvConfig.baseUrl,
-    'Referer': '${EnvConfig.baseUrl}/',
-    'Accept-Language': 'en-US,en;q=0.9',
-    'Accept-Encoding': 'identity',
-    'User-Agent':
-        'Mozilla/5.0 (Linux; Android 14; RMX3853) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36',
-    'Sec-Fetch-Site': 'same-origin',
-    'Sec-Fetch-Mode': 'cors',
-    'Sec-Fetch-Dest': 'empty',
-    'Connection': 'keep-alive',
-    'sec-ch-ua': '"Not_A Brand";v="8", "Chromium";v="120", "Google Chrome";v="120"',
-    'sec-ch-ua-mobile': '?1',
-    'sec-ch-ua-platform': '"Android"',
-  };
+        'accept': 'application/json',
+        'Content-Type': 'application/json',
+        'Origin': EnvConfig.baseUrl,
+        'Referer': '${EnvConfig.baseUrl}/',
+        'Accept-Language': 'en-US,en;q=0.9',
+        'Accept-Encoding': 'identity',
+        'User-Agent':
+            'Mozilla/5.0 (Linux; Android 14; RMX3853) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36',
+        'Sec-Fetch-Site': 'same-origin',
+        'Sec-Fetch-Mode': 'cors',
+        'Sec-Fetch-Dest': 'empty',
+        'Connection': 'keep-alive',
+        'sec-ch-ua':
+            '"Not_A Brand";v="8", "Chromium";v="120", "Google Chrome";v="120"',
+        'sec-ch-ua-mobile': '?1',
+        'sec-ch-ua-platform': '"Android"',
+      };
 
   // ─── Extract clean cookie pairs from Set-Cookie header string ──
   // Input:  "sid=abc; Path=/; HttpOnly, token=xyz; Secure"
@@ -44,7 +48,13 @@ class ApiService {
     // Strategy: split by semicolons first, find name=value pairs,
     // filter out cookie attributes (Path, Domain, Expires, HttpOnly, Secure, SameSite, Max-Age)
     final knownAttributes = {
-      'path', 'domain', 'expires', 'max-age', 'secure', 'httponly', 'samesite'
+      'path',
+      'domain',
+      'expires',
+      'max-age',
+      'secure',
+      'httponly',
+      'samesite'
     };
 
     // Split the entire header by semicolons and commas
@@ -69,7 +79,8 @@ class ApiService {
   }
 
   // ─── Make POST using dart:io HttpClient for proper cookie handling ──
-  static Future<_RawResponse> _postWithCookies(String url, Map<String, String> headers, String body) async {
+  static Future<_RawResponse> _postWithCookies(
+      String url, Map<String, String> headers, String body) async {
     final client = HttpClient();
     client.badCertificateCallback = (cert, host, port) => true; // Handle SSL
     try {
@@ -82,7 +93,8 @@ class ApiService {
           request.headers.set(key, value);
         }
       });
-      request.headers.contentType = ContentType('application', 'json', charset: 'utf-8');
+      request.headers.contentType =
+          ContentType('application', 'json', charset: 'utf-8');
 
       // Forward cookies
       if (_cookieHeader != null && _cookieHeader!.isNotEmpty) {
@@ -101,12 +113,14 @@ class ApiService {
       final parsedCookies = <String>[];
       for (final cookie in response.cookies) {
         parsedCookies.add('${cookie.name}=${cookie.value}');
-        dev.log('🍪 dart:io cookie: ${cookie.name}=${cookie.value.substring(0, min(40, cookie.value.length))}...');
+        dev.log(
+            '🍪 dart:io cookie: ${cookie.name}=${cookie.value.substring(0, min(40, cookie.value.length))}...');
       }
 
       // Method 2: raw set-cookie header
       final rawSetCookie = response.headers.value('set-cookie');
-      dev.log('🍪 Raw set-cookie header: ${rawSetCookie != null ? rawSetCookie.substring(0, min(100, rawSetCookie.length)) : 'null'}');
+      dev.log(
+          '🍪 Raw set-cookie header: ${rawSetCookie != null ? rawSetCookie.substring(0, min(100, rawSetCookie.length)) : 'null'}');
 
       // Use whichever method gives us cookies
       String newCookies;
@@ -126,7 +140,8 @@ class ApiService {
       if (allSetCookieHeaders != null) {
         dev.log('🍪 All set-cookie headers (${allSetCookieHeaders.length}):');
         for (int i = 0; i < allSetCookieHeaders.length; i++) {
-          dev.log('  [$i] ${allSetCookieHeaders[i].substring(0, min(80, allSetCookieHeaders[i].length))}...');
+          dev.log(
+              '  [$i] ${allSetCookieHeaders[i].substring(0, min(80, allSetCookieHeaders[i].length))}...');
           // Parse each header individually
           final eqIdx = allSetCookieHeaders[i].indexOf('=');
           if (eqIdx > 0) {
@@ -151,7 +166,8 @@ class ApiService {
           final existing = _parseCookieString(_cookieHeader!);
           final incoming = _parseCookieString(newCookies);
           existing.addAll(incoming);
-          _cookieHeader = existing.entries.map((e) => '${e.key}=${e.value}').join('; ');
+          _cookieHeader =
+              existing.entries.map((e) => '${e.key}=${e.value}').join('; ');
         } else {
           _cookieHeader = newCookies;
         }
@@ -199,7 +215,8 @@ class ApiService {
       );
 
       dev.log('📥 Status: ${response.statusCode}');
-      dev.log('📄 Body preview: ${response.body.substring(0, min(200, response.body.length))}');
+      dev.log(
+          '📄 Body preview: ${response.body.substring(0, min(200, response.body.length))}');
 
       if (response.statusCode == 200 || response.statusCode == 201) {
         final json = jsonDecode(response.body);
@@ -219,7 +236,8 @@ class ApiService {
         dev.log('🔑 publicKey present: ${publicKey != null}');
         if (publicKey != null) {
           dev.log('🔑 publicKey length: ${publicKey.toString().length}');
-          dev.log('🔑 publicKey first 80: ${publicKey.toString().substring(0, min(80, publicKey.toString().length))}');
+          dev.log(
+              '🔑 publicKey first 80: ${publicKey.toString().substring(0, min(80, publicKey.toString().length))}');
         }
         dev.log('🍪 Cookies after session: $_cookieHeader');
 
@@ -276,7 +294,8 @@ class ApiService {
       );
       dev.log('✅ username encrypted: ${encryptedUsername.length} base64 chars');
       dev.log('✅ password encrypted: ${encryptedPassword.length} base64 chars');
-      dev.log('📊 username preview: ${encryptedUsername.substring(0, min(30, encryptedUsername.length))}...');
+      dev.log(
+          '📊 username preview: ${encryptedUsername.substring(0, min(30, encryptedUsername.length))}...');
 
       // ── STEP 3: Login API ──
       dev.log('══════════════════════════════════════');
@@ -299,7 +318,20 @@ class ApiService {
       dev.log('📄 Login body: ${response.body}');
       dev.log('══════════════════════════════════════');
 
-      final json = jsonDecode(response.body);
+      // Server may return HTML instead of JSON (e.g. maintenance page, nginx
+      // error, or redirect to a login form).  Guard against FormatException.
+      final dynamic json;
+      try {
+        json = jsonDecode(response.body);
+      } on FormatException {
+        dev.log('❌ Login: server returned non-JSON (status ${response.statusCode})');
+        return LoginResponse(
+          success: false,
+          message: response.statusCode == 502 || response.statusCode == 503
+              ? 'Server is temporarily unavailable. Please try again in a few minutes.'
+              : 'Unable to connect to server. Please check your internet connection and try again.',
+        );
+      }
       final loginResponse = LoginResponse.fromJson(json, response.statusCode);
 
       if (loginResponse.success) {
@@ -308,20 +340,28 @@ class ApiService {
         _choId = loginResponse.choId;
 
         final prefs = await SharedPreferences.getInstance();
-        if (loginResponse.token != null) {
+        await prefs.setBool(_loggedInKey, true);
+        if (loginResponse.token != null && loginResponse.token!.isNotEmpty) {
           await prefs.setString('auth_token', loginResponse.token!);
+        } else {
+          await prefs.remove('auth_token');
         }
-        if (_sessionId != null) {
+        if (_sessionId != null && _sessionId!.isNotEmpty) {
           await prefs.setString('session_id', _sessionId!);
+        } else {
+          await prefs.remove('session_id');
         }
-        if (_cookieHeader != null) {
+        if (_cookieHeader != null && _cookieHeader!.isNotEmpty) {
           await prefs.setString('cookies', _cookieHeader!);
+        } else {
+          await prefs.remove('cookies');
         }
         if (_choId != null) {
           await prefs.setInt('cho_id', _choId!);
         }
         if (loginResponse.userData != null) {
-          await prefs.setString('user_data', jsonEncode(loginResponse.userData));
+          await prefs.setString(
+              'user_data', jsonEncode(loginResponse.userData));
         }
         dev.log('✅ Login successful! CHO ID: $_choId');
       } else {
@@ -332,9 +372,14 @@ class ApiService {
     } catch (e, stack) {
       dev.log('❌ Login error: $e');
       dev.log('📍 $stack');
+      final isNetwork = e.toString().contains('SocketException') ||
+          e.toString().contains('HandshakeException') ||
+          e.toString().contains('TimeoutException');
       return LoginResponse(
         success: false,
-        message: 'Login failed: ${e.toString()}',
+        message: isNetwork
+            ? 'Unable to connect. Please check your internet connection.'
+            : 'Something went wrong. Please try again.',
       );
     }
   }
@@ -345,7 +390,8 @@ class ApiService {
       final client = HttpClient();
       client.badCertificateCallback = (cert, host, port) => true;
       try {
-        final request = await client.getUrl(Uri.parse(EnvConfig.checkSessionUrl));
+        final request =
+            await client.getUrl(Uri.parse(EnvConfig.checkSessionUrl));
         _apiHeaders.forEach((key, value) {
           if (key.toLowerCase() != 'content-type') {
             request.headers.set(key, value);
@@ -434,7 +480,8 @@ class ApiService {
         if (appt.patientId == patientId) {
           final raw = appt.rawData;
           if (raw == null) continue;
-          final roomId = (raw['room_id'] ?? raw['roomId'] ?? '').toString().trim();
+          final roomId =
+              (raw['room_id'] ?? raw['roomId'] ?? '').toString().trim();
           if (roomId.isNotEmpty) return roomId;
         }
       }
@@ -465,7 +512,8 @@ class ApiService {
         if (appt.patientId != patientId) continue;
         final raw = appt.rawData;
         if (raw == null) continue;
-        final roomId = (raw['room_id'] ?? raw['roomId'] ?? '').toString().trim();
+        final roomId =
+            (raw['room_id'] ?? raw['roomId'] ?? '').toString().trim();
         final appointmentId = int.tryParse(
           (raw['appointment_id'] ?? raw['appointmentId'] ?? raw['id'] ?? '')
               .toString(),
@@ -506,13 +554,63 @@ class ApiService {
       if (response.statusCode == 401 || response.statusCode == 403) {
         dev.log('⚠️ Session expired (${response.statusCode}) for $url');
         sessionExpired = true;
+        SessionExpiryService.notifySessionExpired();
       }
 
-      if (response.statusCode == 200) return body;
+      if (response.statusCode == 200) {
+        if (_looksLikeExpiredSessionPayload(body)) {
+          dev.log('⚠️ Session expired (detected from 200 payload) for $url');
+          sessionExpired = true;
+          SessionExpiryService.notifySessionExpired();
+          return null;
+        }
+        return body;
+      }
       return null;
     } finally {
       client.close();
     }
+  }
+
+  static bool _looksLikeExpiredSessionPayload(String body) {
+    final trimmed = body.trim();
+    if (trimmed.isEmpty) return false;
+
+    final lower = trimmed.toLowerCase();
+
+    final looksLikeHtmlLogin = (lower.startsWith('<!doctype html') ||
+            lower.startsWith('<html') ||
+            lower.contains('<body')) &&
+        (lower.contains('login') ||
+            lower.contains('sign in') ||
+            lower.contains('session expired') ||
+            lower.contains('csrf'));
+
+    if (looksLikeHtmlLogin) return true;
+
+    try {
+      final decoded = jsonDecode(trimmed);
+      if (decoded is Map) {
+        final message = [
+          decoded['message'],
+          decoded['error'],
+          decoded['detail'],
+          decoded['msg'],
+        ].whereType<String>().join(' ').toLowerCase();
+
+        if (message.contains('session expired') ||
+            message.contains('unauthorized') ||
+            message.contains('forbidden') ||
+            message.contains('login again') ||
+            message.contains('sign in again')) {
+          return true;
+        }
+      }
+    } catch (_) {
+      // Non-JSON payloads are handled by the HTML/text checks above.
+    }
+
+    return false;
   }
 
   static List<Appointment> _parseAppointmentList(dynamic data) {
@@ -520,18 +618,17 @@ class ApiService {
     if (data is List) {
       list = data;
     } else if (data is Map) {
-      list = data['data'] ??
+      final records = data['data'] ??
           data['appointments'] ??
           data['results'] ??
-          data['records'] ??
-          [];
-      if (list is! List) list = [];
+          data['records'];
+      list = records is List ? records : [];
     } else {
       list = [];
     }
     return list
-        .where((e) => e is Map<String, dynamic>)
-        .map((e) => Appointment.fromJson(e as Map<String, dynamic>))
+        .whereType<Map<String, dynamic>>()
+        .map(Appointment.fromJson)
         .toList();
   }
 
@@ -543,6 +640,7 @@ class ApiService {
     _userData = null;
     _choId = null;
     final prefs = await SharedPreferences.getInstance();
+    await prefs.remove(_loggedInKey);
     await prefs.remove('auth_token');
     await prefs.remove('session_id');
     await prefs.remove('cookies');
@@ -553,13 +651,25 @@ class ApiService {
   static Future<bool> isLoggedIn() async {
     final prefs = await SharedPreferences.getInstance();
     final token = prefs.getString('auth_token');
-    if (token == null || token.isEmpty) return false;
+    final sessionId = prefs.getString('session_id');
+    final cookies = prefs.getString('cookies');
+    final savedChoId = prefs.getInt('cho_id');
+    final hasActiveSession = prefs.getBool(_loggedInKey) ?? false;
+
+    final hasToken = token != null && token.isNotEmpty;
+    final hasSessionId = sessionId != null && sessionId.isNotEmpty;
+    final hasCookies = cookies != null && cookies.isNotEmpty;
+    final hasSessionArtifacts = hasToken || hasSessionId || hasCookies;
+
+    if (!hasActiveSession && !hasSessionArtifacts) {
+      return false;
+    }
 
     // Restore saved credentials to memory
-    _authToken = token;
-    _sessionId = prefs.getString('session_id');
-    _cookieHeader = prefs.getString('cookies');
-    _choId = prefs.getInt('cho_id');
+    _authToken = hasToken ? token : null;
+    _sessionId = hasSessionId ? sessionId : null;
+    _cookieHeader = hasCookies ? cookies : null;
+    _choId = savedChoId;
 
     final rawUserData = prefs.getString('user_data');
     if (rawUserData != null) {
@@ -573,28 +683,23 @@ class ApiService {
     // 401/403 and we can handle it there gracefully.
     // This prevents the app from showing login every restart just
     // because the check-session endpoint returned an unexpected format.
-    if (_choId != null) {
-      dev.log('✅ Restored session from prefs – token present, cho_id=$_choId');
-
-      // Try to verify session in background (non-blocking)
-      // If invalid, set sessionExpired so dashboard shows re-login prompt
-      checkSession().then((valid) {
-        if (!valid) {
-          dev.log('⚠️ Background session check failed – session expired');
-          sessionExpired = true;
-        } else {
-          dev.log('✅ Background session check passed');
-        }
-      }).catchError((e) {
-        dev.log('⚠️ Background session check error: $e');
-      });
-
+    if (_choId != null && hasSessionArtifacts) {
+      sessionExpired = false;
+      dev.log(
+        '✅ Restored session from prefs – cho_id=$_choId, '
+        'token=$hasToken, sessionId=$hasSessionId, cookies=$hasCookies',
+      );
       return true;
     }
 
     // No cho_id saved — fall back to network check
-    dev.log('🔄 No cho_id in prefs, falling back to checkSession()...');
-    return await checkSession();
+    dev.log(
+        '🔄 Missing cho_id or session artifacts, falling back to checkSession()...');
+    final valid = await checkSession();
+    if (!valid) {
+      await prefs.remove(_loggedInKey);
+    }
+    return valid;
   }
 
   static Future<Map<String, dynamic>?> getUserData() async {
@@ -622,5 +727,6 @@ class SessionInitResult {
   final String? sessionId;
   final String? publicKey;
   final String? error;
-  SessionInitResult({required this.success, this.sessionId, this.publicKey, this.error});
+  SessionInitResult(
+      {required this.success, this.sessionId, this.publicKey, this.error});
 }

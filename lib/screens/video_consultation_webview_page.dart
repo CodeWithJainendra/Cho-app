@@ -13,6 +13,7 @@ import 'package:url_launcher/url_launcher.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 import 'package:webview_flutter_android/webview_flutter_android.dart';
 import '../services/api_service.dart';
+import '../services/session_expiry_service.dart';
 import '../services/video_call_service.dart';
 
 /// Full-screen WebView video consultation for CHO (Community Health Officer).
@@ -36,7 +37,7 @@ class VideoConsultationWebViewPage extends StatefulWidget {
   final int appointmentId;
   final int doctorId;
   final int choId;
-  final int patientId;   // used in CHO-side URL: patient_id=...
+  final int patientId; // used in CHO-side URL: patient_id=...
   final String doctorName;
   // Optional: patient ABHA ID used to construct the prescription getpdf URL.
   // The server stores PDFs at: /prescription_api/getpdf/{abhaId}/{timestamp}.pdf
@@ -67,6 +68,9 @@ class _VideoConsultationWebViewPageState
   bool _hasError = false;
   String _errorMsg = '';
 
+  // ── Connecting overlay: stays visible until web page + video are ready ──
+  bool _showConnectingOverlay = true;
+
   // ── Silent re-login guard ─────────────────────────────────────────────────
   // Prevents duplicate re-login attempts if multiple navigation events fire.
   bool _reLoginInProgress = false;
@@ -86,6 +90,10 @@ class _VideoConsultationWebViewPageState
   bool _prescriptionFound = false;
   bool _nativeChatMonitorStarted = false;
   final Set<String> _seenNativeChatKeys = <String>{};
+  bool _prescriptionServerErrorShown = false;
+
+  // ── Controls whether PopScope allows the route to pop ──
+  bool _allowPop = false;
 
   // For keeping the screen awake during a call.
   static const _wakeChannel = MethodChannel('cho_app/wake_lock');
@@ -100,10 +108,12 @@ class _VideoConsultationWebViewPageState
     // Request camera + mic before building the WebView so Android grants them
     // automatically when the web page asks via getUserMedia.
     _requestPermissionsThenLoad();
-    // NOTE: We do NOT start a native Flutter socket here.
-    // The WebView's /telemed/ page handles its own WebSocket + WebRTC video.
-    // A second socket from Flutter to the same room would cause conflicts
-    // (duplicate participants, competing ICE negotiation).
+    // NOTE: We do NOT start a separate Flutter socket here.
+    // A second socket to the same room causes duplicate participants and
+    // ICE/video conflicts.  Prescription detection relies on:
+    //   1. JS bridge (WebSocket frame interception in the WebView)
+    //   2. REST polling with ABHA-based PDF URL fallback
+    //   3. Manual "Prescription" button (direct PDF URL)
     // Start a polling fallback: if no prescription arrives via WS/bridge
     // within 90 seconds, proactively try to fetch it via REST API.
     _startPrescriptionPollTimer();
@@ -116,7 +126,8 @@ class _VideoConsultationWebViewPageState
   void _startPrescriptionPollTimer() {
     var attempts = 0;
     const maxAttempts = 20; // up to 5 minutes of polling (20 × 15 s)
-    _prescriptionPollTimer = Timer.periodic(const Duration(seconds: 15), (t) async {
+    _prescriptionPollTimer =
+        Timer.periodic(const Duration(seconds: 15), (t) async {
       if (_prescriptionFound || !mounted) {
         t.cancel();
         return;
@@ -126,7 +137,8 @@ class _VideoConsultationWebViewPageState
         t.cancel();
         return;
       }
-      debugPrint('⏱️ PrescriptionPoll: attempt $attempts/$maxAttempts — fetching via API...');
+      debugPrint(
+          '⏱️ PrescriptionPoll: attempt $attempts/$maxAttempts — fetching via API...');
       try {
         await _fetchAndShowPrescription(widget.appointmentId.toString());
       } catch (e) {
@@ -176,7 +188,8 @@ class _VideoConsultationWebViewPageState
     if (messageRoomId.isNotEmpty &&
         messageRoomId != widget.roomId &&
         messageRoomId != 'test_room') {
-      debugPrint('⚠️ NativeChat: dropping msg — wrong room: $messageRoomId (expected ${widget.roomId})');
+      debugPrint(
+          '⚠️ NativeChat: dropping msg — wrong room: $messageRoomId (expected ${widget.roomId})');
       return;
     }
 
@@ -195,8 +208,7 @@ class _VideoConsultationWebViewPageState
         (raw['fileType'] ?? raw['file_type'] ?? '').toString().trim();
     var fileContent =
         (raw['fileContent'] ?? raw['file_content'] ?? '').toString().trim();
-    var fileUrl =
-        (raw['file_url'] ?? raw['fileUrl'] ?? '').toString().trim();
+    var fileUrl = (raw['file_url'] ?? raw['fileUrl'] ?? '').toString().trim();
     final content = (raw['content'] ?? raw['message'] ?? '').toString().trim();
     final messageType =
         (raw['type'] ?? raw['message_type'] ?? '').toString().toLowerCase();
@@ -217,8 +229,7 @@ class _VideoConsultationWebViewPageState
     final lowerFileUrl = fileUrl.toLowerCase();
     final lowerContent = content.toLowerCase();
 
-    final looksLikePdf =
-        lowerFileType.contains('pdf') ||
+    final looksLikePdf = lowerFileType.contains('pdf') ||
         lowerFileName.endsWith('.pdf') ||
         lowerFileUrl.startsWith('data:application/pdf') ||
         lowerFileUrl.contains('getpdf') ||
@@ -260,7 +271,8 @@ class _VideoConsultationWebViewPageState
 
     final scannedUrl = _extractPdfUrl(raw) ?? _extractPdfUrlFromText(content);
     if (scannedUrl != null && scannedUrl.isNotEmpty) {
-      debugPrint('📋 NativeChat: prescription from scanned payload → $scannedUrl');
+      debugPrint(
+          '📋 NativeChat: prescription from scanned payload → $scannedUrl');
       _prescriptionFound = true;
       _openPdfOverlay(
         scannedUrl,
@@ -378,8 +390,9 @@ class _VideoConsultationWebViewPageState
               //  • /prescription_api/getpdf/… — direct PDF URL
               //  • viewer?url=…getpdf… or viewer?url=…prescription…
               //    (Google / custom viewer that wraps the PDF URL)
-              final viewerUrl =
-                  uri.queryParameters['url'] ?? uri.queryParameters['src'] ?? '';
+              final viewerUrl = uri.queryParameters['url'] ??
+                  uri.queryParameters['src'] ??
+                  '';
               final isPdfLink = path.endsWith('.pdf') ||
                   path.contains('/prescription') ||
                   path.contains('getpdf') ||
@@ -398,7 +411,8 @@ class _VideoConsultationWebViewPageState
                             viewerUrl.endsWith('.pdf'))
                     ? viewerUrl
                     : request.url;
-                debugPrint('📄 VideoWebView: PDF/prescription link → overlay: $realUrl');
+                debugPrint(
+                    '📄 VideoWebView: PDF/prescription link → overlay: $realUrl');
                 _openPdfOverlay(realUrl);
                 return NavigationDecision.prevent;
               }
@@ -431,7 +445,7 @@ class _VideoConsultationWebViewPageState
                 } else {
                   debugPrint(
                       '🔚 VideoWebView: prescription already handled; leaving telemed → ${request.url}');
-                  if (mounted) Navigator.pop(context);
+                  _popPage();
                   return NavigationDecision.prevent;
                 }
               }
@@ -447,6 +461,14 @@ class _VideoConsultationWebViewPageState
           },
           onPageFinished: (url) {
             if (mounted) setState(() => _isLoading = false);
+            // Keep the connecting overlay visible for a few seconds after page
+            // load so the user sees a clear "Connecting..." screen instead of
+            // the dark WebView before the camera/video actually starts.
+            Future.delayed(const Duration(seconds: 5), () {
+              if (mounted && _showConnectingOverlay) {
+                setState(() => _showConnectingOverlay = false);
+              }
+            });
             // Inject again after full load as a safety net
             // (e.g. for lazy-loaded modules that register their own XHR).
             _injectAuthToken();
@@ -1532,13 +1554,13 @@ class _VideoConsultationWebViewPageState
     try {
       final prefs = await SharedPreferences.getInstance();
       final remember = prefs.getBool('remember_me') ?? false;
-      final email    = prefs.getString('saved_email') ?? '';
+      final email = prefs.getString('saved_email') ?? '';
       final password = prefs.getString('saved_password') ?? '';
 
       if (!remember || email.isEmpty || password.isEmpty) {
         // No saved credentials — the user must log in manually.
         debugPrint('⚠️ SilentReLogin: no saved credentials → popping to login');
-        if (mounted) Navigator.pop(context);
+        _popPage();
         return;
       }
 
@@ -1551,7 +1573,7 @@ class _VideoConsultationWebViewPageState
 
       if (!result.success) {
         debugPrint('❌ SilentReLogin: re-auth failed: ${result.message}');
-        if (mounted) Navigator.pop(context);
+        _popPage();
         return;
       }
 
@@ -1569,12 +1591,15 @@ class _VideoConsultationWebViewPageState
 
       // Reload the telemed page with the refreshed session.
       if (mounted) {
-        setState(() { _isLoading = true; _hasError = false; });
+        setState(() {
+          _isLoading = true;
+          _hasError = false;
+        });
         _controller?.reload();
       }
     } catch (e) {
       debugPrint('❌ SilentReLogin: error: $e');
-      if (mounted) Navigator.pop(context);
+      _popPage();
     } finally {
       _reLoginInProgress = false;
     }
@@ -1586,7 +1611,7 @@ class _VideoConsultationWebViewPageState
       if (!mounted || _prescriptionFound) return;
       debugPrint(
           '⌛ VideoWebView: no prescription detected after redirect → popping ($url)');
-      Navigator.pop(context);
+      _popPage();
     });
   }
 
@@ -1633,14 +1658,20 @@ class _VideoConsultationWebViewPageState
     try {
       final json = _parseJson(message);
       final pdfUrl = (json['pdfUrl'] ?? '').toString().trim();
-      final fileName = (json['fileName'] ?? 'prescription.pdf').toString().trim();
-      final apptId = (json['appointmentId'] ?? widget.appointmentId.toString()).toString().trim();
-      final firestoreTrigger = json['firestoreTrigger'] == true || json['firestoreTrigger'] == 'true';
+      final fileName =
+          (json['fileName'] ?? 'prescription.pdf').toString().trim();
+      final apptId = (json['appointmentId'] ?? widget.appointmentId.toString())
+          .toString()
+          .trim();
+      final firestoreTrigger = json['firestoreTrigger'] == true ||
+          json['firestoreTrigger'] == 'true';
 
       // Case 0: Firestore status-change trigger (no PDF URL, just a hint to poll REST)
       if (firestoreTrigger && pdfUrl.isEmpty) {
-        debugPrint('📋 PrescriptionBridge: Firestore trigger → immediate REST poll');
-        _fetchAndShowPrescription(apptId.isNotEmpty ? apptId : widget.appointmentId.toString());
+        debugPrint(
+            '📋 PrescriptionBridge: Firestore trigger → immediate REST poll');
+        _fetchAndShowPrescription(
+            apptId.isNotEmpty ? apptId : widget.appointmentId.toString());
         return;
       }
 
@@ -1655,7 +1686,8 @@ class _VideoConsultationWebViewPageState
       // Case 2: base64 data URI ("data:application/pdf;base64,...")
       // Android WebView supports loading data: URIs directly via loadRequest.
       if (pdfUrl.isNotEmpty && pdfUrl.startsWith('data:')) {
-        debugPrint('📋 PrescriptionBridge: base64 PDF received (${pdfUrl.length} chars)');
+        debugPrint(
+            '📋 PrescriptionBridge: base64 PDF received (${pdfUrl.length} chars)');
         _prescriptionFound = true;
         _openPdfOverlay(pdfUrl, fileName: fileName);
         return;
@@ -1663,7 +1695,8 @@ class _VideoConsultationWebViewPageState
 
       // Case 3: no URL in the message → fall back to REST API
       final id = apptId.isNotEmpty ? apptId : widget.appointmentId.toString();
-      debugPrint('📋 PrescriptionBridge: no PDF in WS msg → fetching via API apptId=$id');
+      debugPrint(
+          '📋 PrescriptionBridge: no PDF in WS msg → fetching via API apptId=$id');
       _fetchAndShowPrescription(id);
     } catch (e) {
       debugPrint('⚠️ PrescriptionBridge: parse error: $e  raw="$message"');
@@ -1686,63 +1719,232 @@ class _VideoConsultationWebViewPageState
     final cookies = prefs.getString('cookies') ?? '';
 
     // Helper: make an authenticated GET and return the body or null.
-    Future<String?> authGet(String url) async {
+    Future<Map<String, dynamic>> authGet(String url) async {
       try {
         final uri = Uri.parse(url);
         debugPrint('📋 PrescriptionPoll: GET $uri');
         final client = HttpClient();
         client.badCertificateCallback = (_, __, ___) => true;
         final request = await client.getUrl(uri);
-        if (token.isNotEmpty) request.headers.set('Authorization', 'Bearer $token');
+        if (token.isNotEmpty)
+          request.headers.set('Authorization', 'Bearer $token');
         request.headers.set('Accept', 'application/json');
         if (cookies.isNotEmpty) request.headers.set('Cookie', cookies);
-        final response = await request.close().timeout(const Duration(seconds: 10));
+        final response =
+            await request.close().timeout(const Duration(seconds: 10));
+        final body = await response.transform(const Utf8Decoder()).join();
         if (response.statusCode == 200 || response.statusCode == 201) {
-          return await response.transform(const Utf8Decoder()).join();
+          return {
+            'statusCode': response.statusCode,
+            'body': body,
+          };
         }
         debugPrint('📋 PrescriptionPoll: GET $uri → ${response.statusCode}');
-        response.drain<void>();
-        return null;
+        if (response.statusCode == 401 || response.statusCode == 403) {
+          SessionExpiryService.notifySessionExpired();
+        }
+        return {
+          'statusCode': response.statusCode,
+          'body': body,
+        };
       } catch (e) {
         debugPrint('📋 PrescriptionPoll: error: $e');
-        return null;
+        return {
+          'statusCode': null,
+          'body': null,
+        };
       }
     }
 
     // ── PRIMARY: Same endpoint the /telemed/ web app uses ───────────────────
-    // The React app's _n() function calls:
-    //   axios.get(`${BASE}/appointment/api/appointments/${appointmentId}`)
-    // and reads response.data.pres_link
     final primaryUrl =
         'https://dhanvantari.net.in/appointment/api/appointments/$appointmentId';
-    final body = await authGet(primaryUrl);
+    var response = await authGet(primaryUrl);
+    var statusCode = response['statusCode'] as int?;
+    var body = response['body'] as String?;
+
+    // ── FALLBACK 1: Try adding a trailing slash (Django strictness) ───────
+    if (statusCode == 500 || statusCode == 404) {
+      debugPrint('📋 PrescriptionPoll: primary API failed ($statusCode), trying with trailing slash...');
+      final slashUrl = 'https://dhanvantari.net.in/appointment/api/appointments/$appointmentId/';
+      final slashResp = await authGet(slashUrl);
+      if (slashResp['statusCode'] == 200) {
+        response = slashResp;
+        statusCode = slashResp['statusCode'] as int?;
+        body = slashResp['body'] as String?;
+      }
+    }
+
+    // ── FALLBACK 2: Try dedicated prescription endpoints ───────────────────
+    if (statusCode == 500 || (body != null && body.contains('error'))) {
+      debugPrint('📋 PrescriptionPoll: still failing, trying prescription_api fallbacks...');
+      final fallbacks = [
+        'https://dhanvantari.net.in/prescription_api/get_prescription_by_appointment/$appointmentId',
+        'https://dhanvantari.net.in/prescription_api/prescription/$appointmentId',
+      ];
+      for (final fbUrl in fallbacks) {
+        final fbResp = await authGet(fbUrl);
+        if (fbResp['statusCode'] == 200 && fbResp['body'] != null && fbResp['body']!.contains('pres_link')) {
+          debugPrint('📋 PrescriptionPoll: ✅ Success via fallback endpoint: $fbUrl');
+          response = fbResp;
+          statusCode = fbResp['statusCode'] as int?;
+          body = fbResp['body'] as String?;
+          break;
+        }
+      }
+    }
+
+    // ── FALLBACK 3: Try CHO\'s appointment list (different DB query path) ───
+    if (statusCode == 500 || (body != null && body.contains('error'))) {
+      debugPrint('📋 PrescriptionPoll: still failing, trying CHO appointment list fallback...');
+      final choId = widget.choId > 0 ? widget.choId : (prefs.getInt('cho_id') ?? 0);
+      if (choId > 0) {
+        final listUrl = 'https://dhanvantari.net.in/appointment/api/appointments/cho/$choId';
+        final listResp = await authGet(listUrl);
+        if (listResp['statusCode'] == 200 && listResp['body'] != null) {
+          try {
+            final data = jsonDecode(listResp['body']!);
+            final List appointments = data is List ? data : (data['data'] is List ? data['data'] : []);
+            final target = appointments.firstWhere(
+              (a) => a['id'].toString() == appointmentId || a['appointment_id'].toString() == appointmentId,
+              orElse: () => null,
+            );
+            if (target != null) {
+              debugPrint('📋 PrescriptionPoll: ✅ Success via CHO list fallback!');
+              statusCode = 200;
+              body = jsonEncode(target);
+            }
+          } catch (e) {
+            debugPrint('📋 PrescriptionPoll: CHO list fallback parse error: $e');
+          }
+        }
+      }
+    }
+
+    // ── FALLBACK 4: Try patient-specific endpoint ───────────────────────
+    if (statusCode == 500 || (body != null && !body.contains('pres_link'))) {
+      final patientId = widget.patientId;
+      if (patientId > 0) {
+        debugPrint('📋 PrescriptionPoll: trying patient endpoint for patientId=$patientId...');
+        final patUrl = 'https://dhanvantari.net.in/appointment/api/appointments/patient/$patientId';
+        final patResp = await authGet(patUrl);
+        if (patResp['statusCode'] == 200 && patResp['body'] != null) {
+          try {
+            final data = jsonDecode(patResp['body']!);
+            final List appointments = data is List ? data : (data['data'] is List ? data['data'] : []);
+            final target = appointments.firstWhere(
+              (a) => a['id'].toString() == appointmentId || a['appointment_id'].toString() == appointmentId,
+              orElse: () => null,
+            );
+            if (target != null) {
+              final link = (target['pres_link'] ?? target['presLink'] ?? target['pdf_url'] ?? '').toString().trim();
+              if (link.isNotEmpty) {
+                debugPrint('📋 PrescriptionPoll: ✅ pres_link found via patient fallback → $link');
+                statusCode = 200;
+                body = jsonEncode(target);
+              }
+            }
+          } catch (e) {
+            debugPrint('📋 PrescriptionPoll: patient fallback parse error: $e');
+          }
+        }
+      }
+    }
+
+    // ── FALLBACK 5: Try ABHA-based PDF URL directly ─────────────────────
+    // Pattern: /prescription_api/getpdf/{abhaId}/{timestamp}.pdf
+    // If the ABHA directory returns an HTML page with PDF links, extract them.
+    final abhaId = widget.patientAbhaId ?? '';
+    if (abhaId.isNotEmpty && !_prescriptionFound) {
+      final abhaUrl = 'https://dhanvantari.net.in/prescription_api/getpdf/$abhaId/';
+      debugPrint('📋 PrescriptionPoll: trying ABHA-based getpdf directory → $abhaUrl');
+      final abhaResp = await authGet(abhaUrl);
+      if (abhaResp['statusCode'] == 200 && abhaResp['body'] != null) {
+        final abhaBody = abhaResp['body']! as String;
+        // Look for PDF links in the response (directory listing or redirect)
+        final pdfPattern = RegExp(r'getpdf/[^"<>\s]+\.pdf', caseSensitive: false);
+        final matches = pdfPattern.allMatches(abhaBody);
+        if (matches.isNotEmpty) {
+          // Pick the last (most recent) PDF
+          final lastMatch = matches.last.group(0)!;
+          final pdfUrl = 'https://dhanvantari.net.in/prescription_api/$lastMatch';
+          debugPrint('📋 PrescriptionPoll: ✅ PDF found via ABHA directory → $pdfUrl');
+          _prescriptionFound = true;
+          if (mounted) _openPdfOverlay(pdfUrl, fileName: 'prescription.pdf');
+          return;
+        }
+        // If the response IS a PDF (Content-Type check not available, but try by content)
+        if (abhaBody.startsWith('%PDF') || abhaBody.contains('application/pdf')) {
+          debugPrint('📋 PrescriptionPoll: ✅ ABHA URL returned PDF directly');
+          _prescriptionFound = true;
+          if (mounted) _openPdfOverlay(abhaUrl, fileName: 'prescription.pdf');
+          return;
+        }
+      }
+    }
+
+    if (statusCode == 500) {
+      debugPrint(
+        '📋 PrescriptionPoll: appointment API is returning 500 even after fallbacks',
+      );
+      if (!_prescriptionServerErrorShown && mounted) {
+        _prescriptionServerErrorShown = true;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              'Prescription load nahi ho rahi. Server par 500 error aa rahi hai. Kripya thodi der baad refresh karein.',
+              style: GoogleFonts.inter(fontSize: 12.5),
+            ),
+            behavior: SnackBarBehavior.floating,
+            backgroundColor: const Color(0xFF1F2937),
+            duration: const Duration(seconds: 4),
+          ),
+        );
+      }
+      return;
+    }
+
     if (body != null && body.isNotEmpty) {
       try {
         final data = jsonDecode(body);
         if (data is Map<String, dynamic>) {
           // The web app reads: response.data.pres_link
-          final presLink = (data['pres_link'] ?? data['presLink'] ??
-              data['pdf_url'] ?? data['pdfUrl'] ?? data['prescription_url'] ??
-              data['prescriptionUrl'] ?? '')
+          var presLink = (data['pres_link'] ??
+                  data['presLink'] ??
+                  data['pdf_url'] ??
+                  data['pdfUrl'] ??
+                  data['prescription_url'] ??
+                  data['prescriptionUrl'] ??
+                  data['prescription_pdf_url'] ??
+                  '')
               .toString()
               .trim();
           if (presLink.isNotEmpty) {
+            presLink = _normalizeUrl(presLink);
             debugPrint('📋 PrescriptionPoll: ✅ pres_link found → $presLink');
             _prescriptionFound = true;
+            _prescriptionServerErrorShown = false;
             if (mounted) _openPdfOverlay(presLink);
             return;
           }
-          debugPrint('📋 PrescriptionPoll: appointment found but pres_link is empty (doctor hasn\'t saved yet)');
+          debugPrint(
+              '📋 PrescriptionPoll: appointment found but pres_link is empty (doctor hasn\'t saved yet)');
           // Also check nested structures
-          final nested = data['prescription'] ?? data['data'];
+          final nested = data['prescription'] ?? data['data'] ?? data['appointment'];
           if (nested is Map<String, dynamic>) {
-            final nestedLink = (nested['pres_link'] ?? nested['pdf_url'] ??
-                nested['presLink'] ?? nested['pdfUrl'] ?? '')
+            final nestedLink = (nested['pres_link'] ??
+                    nested['pdf_url'] ??
+                    nested['presLink'] ??
+                    nested['pdfUrl'] ??
+                    nested['prescription_url'] ??
+                    '')
                 .toString()
                 .trim();
             if (nestedLink.isNotEmpty) {
-              debugPrint('📋 PrescriptionPoll: ✅ nested pres_link → $nestedLink');
+              debugPrint(
+                  '📋 PrescriptionPoll: ✅ nested pres_link found → $nestedLink');
               _prescriptionFound = true;
+              _prescriptionServerErrorShown = false;
               if (mounted) _openPdfOverlay(nestedLink);
               return;
             }
@@ -1753,7 +1955,10 @@ class _VideoConsultationWebViewPageState
       }
     }
 
-    debugPrint('📋 PrescriptionPoll: no pres_link yet for appointmentId=$appointmentId');
+    if (statusCode == 200 || statusCode == 201) {
+      debugPrint(
+          '📋 PrescriptionPoll: no pres_link yet for appointmentId=$appointmentId');
+    }
   }
 
   /// Safe JSON → Map helper.
@@ -1770,10 +1975,22 @@ class _VideoConsultationWebViewPageState
   /// Recursively search [data] for any key that looks like a prescription PDF URL.
   String? _extractPdfUrl(Map<String, dynamic> data) {
     for (final key in [
-      'pdf_url', 'pdfUrl', 'file_url', 'fileUrl',
-      'prescription_url', 'prescriptionUrl', 'prescription_pdf_url',
-      'prescriptionPdfUrl', 'document_url', 'documentUrl',
-      'pdfLink', 'pdf_link', 'docUrl', 'doc_url', 'prescUrl', 'presc_url',
+      'pdf_url',
+      'pdfUrl',
+      'file_url',
+      'fileUrl',
+      'prescription_url',
+      'prescriptionUrl',
+      'prescription_pdf_url',
+      'prescriptionPdfUrl',
+      'document_url',
+      'documentUrl',
+      'pdfLink',
+      'pdf_link',
+      'docUrl',
+      'doc_url',
+      'prescUrl',
+      'presc_url',
     ]) {
       final v = data[key];
       if (v is String && v.isNotEmpty) {
@@ -1786,16 +2003,24 @@ class _VideoConsultationWebViewPageState
     final urlVal = data['url'];
     if (urlVal is String && urlVal.isNotEmpty) {
       final unwrapped = _unwrapViewerUrl(urlVal);
-      if (unwrapped.startsWith('http') && _looksLikePdfUrl(unwrapped)) return unwrapped;
+      if (unwrapped.startsWith('http') && _looksLikePdfUrl(unwrapped))
+        return unwrapped;
     }
     for (final entry in data.entries) {
       final v = entry.value;
       if (v is String && v.isNotEmpty) {
         final unwrapped = _unwrapViewerUrl(v);
-        if (unwrapped.startsWith('http') && _looksLikePdfUrl(unwrapped)) return unwrapped;
+        if (unwrapped.startsWith('http') && _looksLikePdfUrl(unwrapped))
+          return unwrapped;
       }
     }
-    for (final mapKey in ['prescription', 'data', 'result', 'response', 'details']) {
+    for (final mapKey in [
+      'prescription',
+      'data',
+      'result',
+      'response',
+      'details'
+    ]) {
       final nested = data[mapKey];
       if (nested is Map<String, dynamic>) {
         final r = _extractPdfUrl(nested);
@@ -1813,8 +2038,10 @@ class _VideoConsultationWebViewPageState
 
   /// Unwrap Google Docs viewer URL to get the actual PDF URL.
   String _unwrapViewerUrl(String url) {
-    if (url.contains('docs.google.com') || url.contains('viewerng') ||
-        url.contains('viewer?url=') || url.contains('viewer?src=')) {
+    if (url.contains('docs.google.com') ||
+        url.contains('viewerng') ||
+        url.contains('viewer?url=') ||
+        url.contains('viewer?src=')) {
       final match = RegExp(r'[?&](?:url|src)=([^&]+)').firstMatch(url);
       if (match != null) {
         try {
@@ -1826,12 +2053,25 @@ class _VideoConsultationWebViewPageState
     return url;
   }
 
+  /// Normalizes relative URLs to absolute.
+  String _normalizeUrl(String u) {
+    if (u.isEmpty) return u;
+    if (u.startsWith('http') || u.startsWith('data:')) return u;
+    // Django REST relative paths: /media/... or /prescription_api/...
+    if (u.startsWith('/')) return 'https://dhanvantari.net.in$u';
+    // Generic relative paths: media/...
+    return 'https://dhanvantari.net.in/$u';
+  }
+
   /// Returns true if [url] looks like a prescription PDF link.
   bool _looksLikePdfUrl(String url) {
     final l = url.toLowerCase();
-    return l.contains('getpdf') || l.contains('prescription') ||
-        l.contains('.pdf') || l.contains('/pdf/') ||
-        l.contains('generate-prescription') || l.contains('presc');
+    return l.contains('getpdf') ||
+        l.contains('prescription') ||
+        l.contains('.pdf') ||
+        l.contains('/pdf/') ||
+        l.contains('generate-prescription') ||
+        l.contains('presc');
   }
 
   /// Extract a PDF URL from a text/HTML body string.
@@ -1871,7 +2111,8 @@ class _VideoConsultationWebViewPageState
 
   bool _isGoogleViewerUrl(String url) {
     final l = url.toLowerCase();
-    return l.contains('docs.google.com/viewer') || l.contains('viewerng/viewer');
+    return l.contains('docs.google.com/viewer') ||
+        l.contains('viewerng/viewer');
   }
 
   // ══════════════════════════════════════════════════════════
@@ -1881,7 +2122,7 @@ class _VideoConsultationWebViewPageState
   @override
   Widget build(BuildContext context) {
     return PopScope(
-      canPop: false,
+      canPop: _allowPop,
       onPopInvokedWithResult: (didPop, _) {
         if (!didPop) _confirmLeave();
       },
@@ -1892,75 +2133,127 @@ class _VideoConsultationWebViewPageState
         body: Stack(
           children: [
             // ── Full-screen WebView ──────────────────────────
-            if (_controller != null)
-              WebViewWidget(controller: _controller!),
+            if (_controller != null) WebViewWidget(controller: _controller!),
 
-            // ── Loading splash ───────────────────────────────
-            if (_isLoading && !_hasError)
+            // ── Connecting overlay ─────────────────────────────
+            // Stays visible while page loads AND for a few seconds after,
+            // so the user sees a clear "Connecting" screen instead of the
+            // dark WebView before the camera starts.
+            if ((_isLoading || _showConnectingOverlay) && !_hasError)
               Container(
-                color: const Color(0xFF0F172A),
-                child: Center(
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Container(
-                        width: 72,
-                        height: 72,
-                        decoration: BoxDecoration(
-                          color: Colors.white.withValues(alpha: 0.08),
-                          shape: BoxShape.circle,
-                        ),
-                        child: Center(
-                          child: Text(
-                            _initials(widget.doctorName),
-                            style: GoogleFonts.poppins(
-                              fontSize: 24,
-                              fontWeight: FontWeight.w700,
-                              color: Colors.white.withValues(alpha: 0.6),
+                decoration: const BoxDecoration(
+                  gradient: LinearGradient(
+                    begin: Alignment.topCenter,
+                    end: Alignment.bottomCenter,
+                    colors: [
+                      Color(0xFF0F172A),
+                      Color(0xFF1E293B),
+                      Color(0xFF0F3460),
+                    ],
+                  ),
+                ),
+                child: SafeArea(
+                  child: Center(
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        // ── Doctor avatar with green ring ──
+                        Container(
+                          width: 110,
+                          height: 110,
+                          decoration: BoxDecoration(
+                            shape: BoxShape.circle,
+                            border: Border.all(
+                              color: const Color(0xFF10B981),
+                              width: 3,
+                            ),
+                            boxShadow: [
+                              BoxShadow(
+                                color: const Color(0xFF10B981)
+                                    .withValues(alpha: 0.3),
+                                blurRadius: 24,
+                                spreadRadius: 4,
+                              ),
+                            ],
+                          ),
+                          child: Container(
+                            margin: const EdgeInsets.all(4),
+                            decoration: BoxDecoration(
+                              shape: BoxShape.circle,
+                              color: Colors.white.withValues(alpha: 0.1),
+                            ),
+                            child: Center(
+                              child: Text(
+                                _initials(widget.doctorName),
+                                style: GoogleFonts.poppins(
+                                  fontSize: 34,
+                                  fontWeight: FontWeight.w700,
+                                  color: Colors.white.withValues(alpha: 0.8),
+                                ),
+                              ),
                             ),
                           ),
                         ),
-                      ),
-                      const SizedBox(height: 20),
-                      Text(
-                        widget.doctorName,
-                        style: GoogleFonts.poppins(
-                          fontSize: 16,
-                          fontWeight: FontWeight.w600,
-                          color: Colors.white,
+                        const SizedBox(height: 20),
+                        Text(
+                          widget.doctorName,
+                          style: GoogleFonts.poppins(
+                            fontSize: 20,
+                            fontWeight: FontWeight.w600,
+                            color: Colors.white,
+                          ),
                         ),
-                      ),
-                      const SizedBox(height: 6),
-                      Text(
-                        'Preparing consultation…',
-                        style: GoogleFonts.inter(
-                          fontSize: 13,
-                          color: Colors.white.withValues(alpha: 0.6),
+                        const SizedBox(height: 28),
+                        // ── Spinner ──
+                        const SizedBox(
+                          width: 36,
+                          height: 36,
+                          child: CircularProgressIndicator(
+                            color: Color(0xFF10B981),
+                            strokeWidth: 3,
+                          ),
                         ),
-                      ),
-                      const SizedBox(height: 28),
-                      const SizedBox(
-                        width: 36,
-                        height: 36,
-                        child: CircularProgressIndicator(
-                          color: Colors.white,
-                          strokeWidth: 2.5,
+                        const SizedBox(height: 16),
+                        Text(
+                          _isLoading
+                              ? 'Preparing consultation…'
+                              : 'Connecting to doctor…',
+                          style: GoogleFonts.inter(
+                            fontSize: 16,
+                            fontWeight: FontWeight.w500,
+                            color: Colors.white,
+                          ),
                         ),
-                      ),
-                      const SizedBox(height: 32),
-                      TextButton(
-                        onPressed: _confirmLeave,
-                        style: TextButton.styleFrom(
-                          foregroundColor: Colors.white70,
-                          padding: const EdgeInsets.symmetric(
-                              horizontal: 24, vertical: 10),
+                        const SizedBox(height: 8),
+                        Text(
+                          'Please wait, this may take a moment',
+                          style: GoogleFonts.inter(
+                            fontSize: 13,
+                            color: Colors.white.withValues(alpha: 0.5),
+                          ),
                         ),
-                        child: Text(
-                          'Cancel',
-                          style: GoogleFonts.inter(fontSize: 14),
+                        const SizedBox(height: 36),
+                        TextButton.icon(
+                          onPressed: _confirmLeave,
+                          icon: const Icon(Icons.close_rounded, size: 18),
+                          label: Text(
+                            'Cancel',
+                            style: GoogleFonts.inter(
+                                fontSize: 14, fontWeight: FontWeight.w500),
+                          ),
+                          style: TextButton.styleFrom(
+                            foregroundColor:
+                                Colors.white.withValues(alpha: 0.7),
+                            backgroundColor:
+                                Colors.white.withValues(alpha: 0.1),
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 28, vertical: 10),
+                            shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(24)),
+                          ),
                         ),
-                      ),
-                    ],
+                      ],
+                    ),
                   ),
                 ),
               ),
@@ -2022,7 +2315,7 @@ class _VideoConsultationWebViewPageState
                         ),
                         const SizedBox(height: 12),
                         TextButton(
-                          onPressed: () => Navigator.pop(context),
+                          onPressed: _popPage,
                           child: Text('Go back',
                               style: GoogleFonts.inter(
                                   color: Colors.white54, fontSize: 13)),
@@ -2056,8 +2349,8 @@ class _VideoConsultationWebViewPageState
                 bottom: 0,
                 top: MediaQuery.of(context).size.height * 0.15,
                 child: ClipRRect(
-                  borderRadius: const BorderRadius.vertical(
-                      top: Radius.circular(16)),
+                  borderRadius:
+                      const BorderRadius.vertical(top: Radius.circular(16)),
                   child: Column(
                     children: [
                       // ── Header bar ──────────────────────────────────────
@@ -2091,10 +2384,12 @@ class _VideoConsultationWebViewPageState
                                 padding: const EdgeInsets.symmetric(
                                     horizontal: 10, vertical: 5),
                                 decoration: BoxDecoration(
-                                  color: const Color(0xFF10B981).withValues(alpha: 0.15),
+                                  color: const Color(0xFF10B981)
+                                      .withValues(alpha: 0.15),
                                   borderRadius: BorderRadius.circular(8),
                                   border: Border.all(
-                                      color: const Color(0xFF10B981).withValues(alpha: 0.4)),
+                                      color: const Color(0xFF10B981)
+                                          .withValues(alpha: 0.4)),
                                 ),
                                 child: Text(
                                   'Open in Browser',
@@ -2134,7 +2429,8 @@ class _VideoConsultationWebViewPageState
                                 color: Colors.white,
                                 child: Center(
                                   child: Padding(
-                                    padding: const EdgeInsets.symmetric(horizontal: 32),
+                                    padding: const EdgeInsets.symmetric(
+                                        horizontal: 32),
                                     child: Column(
                                       mainAxisSize: MainAxisSize.min,
                                       children: [
@@ -2155,25 +2451,32 @@ class _VideoConsultationWebViewPageState
                                           'The prescription could not be loaded inside the app.',
                                           textAlign: TextAlign.center,
                                           style: GoogleFonts.inter(
-                                              fontSize: 13, color: Colors.grey[600]),
+                                              fontSize: 13,
+                                              color: Colors.grey[600]),
                                         ),
                                         const SizedBox(height: 24),
                                         // "Open in Browser" retry — exactly like RN's retryButton
                                         ElevatedButton.icon(
-                                          onPressed: () => _openPdfInBrowser(_currentPdfUrl),
-                                          icon: const Icon(Icons.open_in_browser_rounded, size: 18),
+                                          onPressed: () =>
+                                              _openPdfInBrowser(_currentPdfUrl),
+                                          icon: const Icon(
+                                              Icons.open_in_browser_rounded,
+                                              size: 18),
                                           label: Text(
                                             'Open in Browser',
                                             style: GoogleFonts.inter(
-                                                fontWeight: FontWeight.w600, fontSize: 14),
+                                                fontWeight: FontWeight.w600,
+                                                fontSize: 14),
                                           ),
                                           style: ElevatedButton.styleFrom(
-                                            backgroundColor: const Color(0xFF10B981),
+                                            backgroundColor:
+                                                const Color(0xFF10B981),
                                             foregroundColor: Colors.white,
                                             padding: const EdgeInsets.symmetric(
                                                 horizontal: 28, vertical: 12),
                                             shape: RoundedRectangleBorder(
-                                                borderRadius: BorderRadius.circular(24)),
+                                                borderRadius:
+                                                    BorderRadius.circular(24)),
                                           ),
                                         ),
                                         const SizedBox(height: 10),
@@ -2181,7 +2484,8 @@ class _VideoConsultationWebViewPageState
                                           onPressed: _closePdfOverlay,
                                           child: Text('Close',
                                               style: GoogleFonts.inter(
-                                                  color: Colors.grey[500], fontSize: 13)),
+                                                  color: Colors.grey[500],
+                                                  fontSize: 13)),
                                         ),
                                       ],
                                     ),
@@ -2207,7 +2511,8 @@ class _VideoConsultationWebViewPageState
                                             Text(
                                               'Loading prescription…',
                                               style: GoogleFonts.inter(
-                                                  color: Colors.grey[600], fontSize: 13),
+                                                  color: Colors.grey[600],
+                                                  fontSize: 13),
                                             ),
                                           ],
                                         ),
@@ -2279,7 +2584,8 @@ class _VideoConsultationWebViewPageState
             if (path.contains('/login') ||
                 path.contains('/signin') ||
                 path.contains('/accounts/login')) {
-              debugPrint('📄 PdfOverlay: redirected to login → closing overlay');
+              debugPrint(
+                  '📄 PdfOverlay: redirected to login → closing overlay');
               // Open in browser as fallback (like RN app's Linking.openURL on auth failure)
               _openPdfInBrowser(pdfUrl);
               _closePdfOverlay();
@@ -2289,7 +2595,11 @@ class _VideoConsultationWebViewPageState
           return NavigationDecision.navigate;
         },
         onPageStarted: (_) {
-          if (mounted) setState(() { _pdfLoading = true; _pdfError = false; });
+          if (mounted)
+            setState(() {
+              _pdfLoading = true;
+              _pdfError = false;
+            });
         },
         onPageFinished: (_) {
           if (mounted) setState(() => _pdfLoading = false);
@@ -2300,7 +2610,11 @@ class _VideoConsultationWebViewPageState
           // Only surface main-frame failures as errors (like RN's onError).
           if (e.isForMainFrame == true) {
             debugPrint('⚠️ PdfOverlay load error: ${e.description}');
-            if (mounted) setState(() { _pdfLoading = false; _pdfError = true; });
+            if (mounted)
+              setState(() {
+                _pdfLoading = false;
+                _pdfError = true;
+              });
           }
         },
       ));
@@ -2366,7 +2680,8 @@ class _VideoConsultationWebViewPageState
 
       // Save to app cache dir so we don't need WRITE_EXTERNAL_STORAGE permission.
       final tmpDir = await getTemporaryDirectory();
-      final file = File('${tmpDir.path}/prescription_${DateTime.now().millisecondsSinceEpoch}.pdf');
+      final file = File(
+          '${tmpDir.path}/prescription_${DateTime.now().millisecondsSinceEpoch}.pdf');
       await file.writeAsBytes(bytes, flush: true);
 
       debugPrint('📄 PdfOverlay: saved base64 PDF → ${file.path}');
@@ -2376,7 +2691,8 @@ class _VideoConsultationWebViewPageState
       if (await canLaunchUrl(fileUri)) {
         await launchUrl(fileUri, mode: LaunchMode.externalApplication);
       } else {
-        debugPrint('⚠️ PdfOverlay: no PDF viewer app found to open ${file.path}');
+        debugPrint(
+            '⚠️ PdfOverlay: no PDF viewer app found to open ${file.path}');
       }
     } catch (e) {
       debugPrint('⚠️ PdfOverlay: _saveBase64AndOpen error: $e');
@@ -2427,17 +2743,43 @@ class _VideoConsultationWebViewPageState
 """).catchError((_) {});
   }
 
+  /// Safely pop this page by first allowing PopScope, then popping after rebuild.
+  void _popPage() {
+    if (!mounted) return;
+    setState(() => _allowPop = true);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) Navigator.pop(context);
+    });
+  }
+
+  /// Open the prescription page directly — loads the same /tele_back/ page
+  /// the doctor uses, which fetches and displays the prescription + PDF.
+  /// This bypasses the broken appointments REST API entirely.
+  void _openPrescriptionDirectly() {
+    final presUrl = Uri.https('dhanvantari.net.in', '/tele_back/', {
+      'roomid': widget.roomId,
+      'prescriptionid': widget.appointmentId.toString(),
+      'appointmentId': widget.appointmentId.toString(),
+      'doctorid': widget.doctorId.toString(),
+      'choid': widget.choId.toString(),
+    }).toString();
+
+    debugPrint('📋 DirectPrescription: opening /tele_back/ → $presUrl');
+    _openPdfOverlay(presUrl, fileName: 'Prescription');
+  }
+
   void _confirmLeave() {
     showDialog(
       context: context,
       builder: (ctx) => AlertDialog(
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
         title: Row(children: [
-          const Icon(Icons.call_end_rounded, color: Color(0xFFFF5252), size: 22),
+          const Icon(Icons.call_end_rounded,
+              color: Color(0xFFFF5252), size: 22),
           const SizedBox(width: 10),
           Text('Leave Consultation',
-              style:
-                  GoogleFonts.poppins(fontSize: 15, fontWeight: FontWeight.w600)),
+              style: GoogleFonts.poppins(
+                  fontSize: 15, fontWeight: FontWeight.w600)),
         ]),
         content: Text(
           'Are you sure you want to leave this consultation?',
@@ -2450,8 +2792,8 @@ class _VideoConsultationWebViewPageState
           ),
           ElevatedButton(
             onPressed: () {
-              Navigator.pop(ctx);
-              Navigator.pop(context);
+              Navigator.pop(ctx); // dismiss dialog
+              _popPage();
             },
             style: ElevatedButton.styleFrom(
               backgroundColor: const Color(0xFFFF5252),

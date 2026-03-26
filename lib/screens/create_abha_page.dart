@@ -25,9 +25,9 @@ class _CreateAbhaPageState extends State<CreateAbhaPage>
   final _otpController = TextEditingController();
 
   String _authMethod = 'aadhaar';
-  bool _linkRecords = true;
-  bool _shareRecords = true;
-  bool _publicHealthConsent = true;
+  bool _linkRecords = false;
+  bool _shareRecords = false;
+  bool _publicHealthConsent = false;
   bool _workerConfirmed = false;
   bool _patientConfirmed = false;
 
@@ -210,7 +210,10 @@ class _CreateAbhaPageState extends State<CreateAbhaPage>
 
     _pollTimer?.cancel();
     _pollTimer = Timer.periodic(const Duration(seconds: 5), (timer) async {
-      if (!mounted) { timer.cancel(); return; }
+      if (!mounted) {
+        timer.cancel();
+        return;
+      }
       _pollAttempt++;
       if (_pollAttempt > 10) {
         timer.cancel();
@@ -225,7 +228,10 @@ class _CreateAbhaPageState extends State<CreateAbhaPage>
 
       try {
         final result = await BookingService.checkFaceAuthStatus(
-          txnId: txnId, aadhaar: aadhaar, mobile: mobile, authToken: _authToken!,
+          txnId: txnId,
+          aadhaar: aadhaar,
+          mobile: mobile,
+          authToken: _authToken!,
         );
         if (_isFaceAuthComplete(result)) {
           timer.cancel();
@@ -261,10 +267,12 @@ class _CreateAbhaPageState extends State<CreateAbhaPage>
       );
 
       // Extract txnId from response
-      _otpTxnId = (otpResponse['txnId'] ?? otpResponse['transaction_id'] ?? '').toString();
+      _otpTxnId = (otpResponse['txnId'] ?? otpResponse['transaction_id'] ?? '')
+          .toString();
 
       if (_otpTxnId == null || _otpTxnId!.isEmpty) {
-        throw const BookingApiException('Transaction ID missing in OTP response.');
+        throw const BookingApiException(
+            'Transaction ID missing in OTP response.');
       }
 
       setState(() {
@@ -281,7 +289,10 @@ class _CreateAbhaPageState extends State<CreateAbhaPage>
       final abhaNumber = _extractAbhaNumber(faceAuthData);
       if (abhaNumber != null) {
         _showAbhaResultPopup(
-          isAlreadyExists: (faceAuthData['message'] ?? '').toString().toLowerCase().contains('already exist'),
+          isAlreadyExists: (faceAuthData['message'] ?? '')
+              .toString()
+              .toLowerCase()
+              .contains('already exist'),
           abhaNumber: abhaNumber,
           abhaAddress: _extractAbhaAddress(faceAuthData),
         );
@@ -296,7 +307,10 @@ class _CreateAbhaPageState extends State<CreateAbhaPage>
     _resendCountdown = 60;
     _resendTimer?.cancel();
     _resendTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
-      if (!mounted) { timer.cancel(); return; }
+      if (!mounted) {
+        timer.cancel();
+        return;
+      }
       setState(() => _resendCountdown--);
       if (_resendCountdown <= 0) timer.cancel();
     });
@@ -315,7 +329,8 @@ class _CreateAbhaPageState extends State<CreateAbhaPage>
         accessToken: _abdmAccessToken!,
       );
 
-      _otpTxnId = (otpResponse['txnId'] ?? otpResponse['transaction_id'] ?? '').toString();
+      _otpTxnId = (otpResponse['txnId'] ?? otpResponse['transaction_id'] ?? '')
+          .toString();
 
       setState(() => _isLoading = false);
       _startResendTimer();
@@ -355,9 +370,15 @@ class _CreateAbhaPageState extends State<CreateAbhaPage>
 
       // Extract patient info
       final abhaNumber = _extractAbhaNumber(mergedData) ?? '';
-      final firstName = (mergedData['firstName'] ?? mergedData['first_name'] ?? '').toString();
-      final lastName = (mergedData['lastName'] ?? mergedData['last_name'] ?? '').toString();
-      final mobile = (mergedData['mobile'] ?? mergedData['phone'] ?? _mobileController.text.trim()).toString();
+      final firstName =
+          (mergedData['firstName'] ?? mergedData['first_name'] ?? '')
+              .toString();
+      final lastName =
+          (mergedData['lastName'] ?? mergedData['last_name'] ?? '').toString();
+      final mobile = (mergedData['mobile'] ??
+              mergedData['phone'] ??
+              _mobileController.text.trim())
+          .toString();
       final gender = (mergedData['gender'] ?? '').toString();
       final email = (mergedData['email'] ?? 'example@example.com').toString();
 
@@ -380,14 +401,23 @@ class _CreateAbhaPageState extends State<CreateAbhaPage>
       String patientId;
 
       if (existingPatient != null) {
-        patientId = (existingPatient['patient_id'] ?? existingPatient['id'] ?? '').toString();
+        patientId =
+            (existingPatient['patient_id'] ?? existingPatient['id'] ?? '')
+                .toString();
         _patientData = existingPatient;
       } else {
         // Register patient
         final payload = <String, dynamic>{
-          'abha_id': abhaNumber.isNotEmpty ? abhaNumber : _generateDummyAbhaId(),
-          'first_name': firstName.isNotEmpty ? firstName : _patientNameController.text.trim().split(' ').first,
-          'last_name': lastName.isNotEmpty ? lastName : (_patientNameController.text.trim().split(' ').length > 1 ? _patientNameController.text.trim().split(' ').last : ''),
+          'abha_id':
+              abhaNumber.isNotEmpty ? abhaNumber : _generateDummyAbhaId(),
+          'first_name': firstName.isNotEmpty
+              ? firstName
+              : _patientNameController.text.trim().split(' ').first,
+          'last_name': lastName.isNotEmpty
+              ? lastName
+              : (_patientNameController.text.trim().split(' ').length > 1
+                  ? _patientNameController.text.trim().split(' ').last
+                  : ''),
           'email': email.isEmpty ? 'example@example.com' : email,
           'phone': mobile.isNotEmpty ? mobile : _mobileController.text.trim(),
           'age': int.tryParse(age) ?? 0,
@@ -436,6 +466,10 @@ class _CreateAbhaPageState extends State<CreateAbhaPage>
   // ══════════════════════════════════════════════════════
 
   void _onContinuePressed() {
+    if (_flowState == 'IDLE' && !_validateRequiredSelections()) {
+      return;
+    }
+
     if (_authMethod == 'face') {
       switch (_flowState) {
         case 'FACE_AUTH':
@@ -460,18 +494,52 @@ class _CreateAbhaPageState extends State<CreateAbhaPage>
         'ABHA creation via Aadhaar OTP is ready. API submission can be connected next.');
   }
 
+  bool _validateRequiredSelections() {
+    final patientName = _patientNameController.text.trim();
+    final aadhaar = _aadhaarController.text.trim();
+    final mobile = _mobileController.text.trim();
+
+    if (patientName.isEmpty) {
+      _showSnackBar('Please enter patient name.');
+      return false;
+    }
+    if (mobile.length != 10) {
+      _showSnackBar('Please enter a valid 10-digit mobile number.');
+      return false;
+    }
+    if (aadhaar.length != 12) {
+      _showSnackBar('Please enter a valid 12-digit Aadhaar number.');
+      return false;
+    }
+
+    if (!_linkRecords ||
+        !_shareRecords ||
+        !_publicHealthConsent ||
+        !_workerConfirmed ||
+        !_patientConfirmed) {
+      _showSnackBar(
+          'Please select all required consent checkboxes to continue.');
+      return false;
+    }
+    return true;
+  }
+
   // ══════════════════════════════════════════════════════
   //  HELPERS
   // ══════════════════════════════════════════════════════
 
   String? _extractAbhaNumber(Map<String, dynamic> data) {
-    final direct = data['ABHANumber'] ?? data['abhaNumber'] ??
-        data['healthIdNumber'] ?? data['healthId'];
+    final direct = data['ABHANumber'] ??
+        data['abhaNumber'] ??
+        data['healthIdNumber'] ??
+        data['healthId'];
     if (direct != null) return direct.toString();
     final profile = data['ABHAProfile'];
     if (profile is Map<String, dynamic>) {
-      final p = profile['ABHANumber'] ?? profile['abhaNumber'] ??
-          profile['healthIdNumber'] ?? profile['healthId'];
+      final p = profile['ABHANumber'] ??
+          profile['abhaNumber'] ??
+          profile['healthIdNumber'] ??
+          profile['healthId'];
       if (p != null) return p.toString();
     }
     final nested = data['data'];
@@ -480,13 +548,17 @@ class _CreateAbhaPageState extends State<CreateAbhaPage>
   }
 
   String? _extractAbhaAddress(Map<String, dynamic> data) {
-    final direct = data['ABHAAddress'] ?? data['abhaAddress'] ??
-        data['healthId'] ?? data['phrAddress'];
+    final direct = data['ABHAAddress'] ??
+        data['abhaAddress'] ??
+        data['healthId'] ??
+        data['phrAddress'];
     if (direct != null) return direct.toString();
     final profile = data['ABHAProfile'];
     if (profile is Map<String, dynamic>) {
-      final p = profile['ABHAAddress'] ?? profile['abhaAddress'] ??
-          profile['healthId'] ?? profile['phrAddress'];
+      final p = profile['ABHAAddress'] ??
+          profile['abhaAddress'] ??
+          profile['healthId'] ??
+          profile['phrAddress'];
       if (p != null) return p.toString();
     }
     final nested = data['data'];
@@ -502,7 +574,8 @@ class _CreateAbhaPageState extends State<CreateAbhaPage>
     final dob = DateTime(birthYear, birthMonth, birthDay);
     final now = DateTime.now();
     var years = now.year - dob.year;
-    if (now.month < dob.month || (now.month == dob.month && now.day < dob.day)) {
+    if (now.month < dob.month ||
+        (now.month == dob.month && now.day < dob.day)) {
       years--;
     }
     return years.toString();
@@ -520,17 +593,25 @@ class _CreateAbhaPageState extends State<CreateAbhaPage>
 
   String _normalizeGender(String value) {
     switch (value.trim().toLowerCase()) {
-      case 'm': case 'male': return 'male';
-      case 'f': case 'female': return 'female';
-      default: return 'other';
+      case 'm':
+      case 'male':
+        return 'male';
+      case 'f':
+      case 'female':
+        return 'female';
+      default:
+        return 'other';
     }
   }
 
   String _displayGender(String value) {
     switch (_normalizeGender(value)) {
-      case 'male': return 'Male';
-      case 'female': return 'Female';
-      default: return 'Other';
+      case 'male':
+        return 'Male';
+      case 'female':
+        return 'Female';
+      default:
+        return 'Other';
     }
   }
 
@@ -600,21 +681,33 @@ class _CreateAbhaPageState extends State<CreateAbhaPage>
             mainAxisSize: MainAxisSize.min,
             children: [
               Container(
-                width: 72, height: 72,
+                width: 72,
+                height: 72,
                 decoration: BoxDecoration(
-                  color: isAlreadyExists ? const Color(0xFFFFF3E0) : const Color(0xFFE8F5E9),
+                  color: isAlreadyExists
+                      ? const Color(0xFFFFF3E0)
+                      : const Color(0xFFE8F5E9),
                   shape: BoxShape.circle,
                 ),
                 child: Icon(
-                  isAlreadyExists ? Icons.info_rounded : Icons.check_circle_rounded,
+                  isAlreadyExists
+                      ? Icons.info_rounded
+                      : Icons.check_circle_rounded,
                   size: 40,
-                  color: isAlreadyExists ? const Color(0xFFE65100) : const Color(0xFF2E7D32),
+                  color: isAlreadyExists
+                      ? const Color(0xFFE65100)
+                      : const Color(0xFF2E7D32),
                 ),
               ),
               const SizedBox(height: 20),
               Text(
-                isAlreadyExists ? 'Account Already Exists' : 'ABHA Account Created',
-                style: GoogleFonts.poppins(fontSize: 20, fontWeight: FontWeight.w700, color: AppColors.textPrimary),
+                isAlreadyExists
+                    ? 'Account Already Exists'
+                    : 'ABHA Account Created',
+                style: GoogleFonts.poppins(
+                    fontSize: 20,
+                    fontWeight: FontWeight.w700,
+                    color: AppColors.textPrimary),
                 textAlign: TextAlign.center,
               ),
               const SizedBox(height: 8),
@@ -622,7 +715,8 @@ class _CreateAbhaPageState extends State<CreateAbhaPage>
                 isAlreadyExists
                     ? 'An ABHA account already exists for this Aadhaar number.'
                     : 'Face authentication completed successfully!',
-                style: GoogleFonts.inter(fontSize: 14, height: 1.5, color: AppColors.textSecondary),
+                style: GoogleFonts.inter(
+                    fontSize: 14, height: 1.5, color: AppColors.textSecondary),
                 textAlign: TextAlign.center,
               ),
               if (abhaNumber != null) ...[
@@ -637,7 +731,11 @@ class _CreateAbhaPageState extends State<CreateAbhaPage>
                   ),
                   child: Column(
                     children: [
-                      Text('ABHA Number', style: GoogleFonts.inter(fontSize: 12, fontWeight: FontWeight.w600, color: AppColors.textSecondary)),
+                      Text('ABHA Number',
+                          style: GoogleFonts.inter(
+                              fontSize: 12,
+                              fontWeight: FontWeight.w600,
+                              color: AppColors.textSecondary)),
                       const SizedBox(height: 8),
                       GestureDetector(
                         onTap: () {
@@ -664,7 +762,10 @@ class _CreateAbhaPageState extends State<CreateAbhaPage>
                               ),
                             ),
                             const SizedBox(width: 8),
-                            Icon(Icons.copy_rounded, size: 18, color: AppColors.primary.withValues(alpha: 0.6)),
+                            Icon(Icons.copy_rounded,
+                                size: 18,
+                                color:
+                                    AppColors.primary.withValues(alpha: 0.6)),
                           ],
                         ),
                       ),
@@ -674,7 +775,8 @@ class _CreateAbhaPageState extends State<CreateAbhaPage>
               ],
               const SizedBox(height: 20),
               SizedBox(
-                width: double.infinity, height: 50,
+                width: double.infinity,
+                height: 50,
                 child: ElevatedButton(
                   onPressed: () {
                     // Close the popup and switch to the REGISTERED state so
@@ -690,14 +792,17 @@ class _CreateAbhaPageState extends State<CreateAbhaPage>
                     });
                   },
                   style: ElevatedButton.styleFrom(
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                    shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(16)),
                   ),
                   child: Row(
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: [
                       const Icon(Icons.person_rounded, size: 18),
                       const SizedBox(width: 8),
-                      Text('View Patient', style: GoogleFonts.poppins(fontSize: 16, fontWeight: FontWeight.w600)),
+                      Text('View Patient',
+                          style: GoogleFonts.poppins(
+                              fontSize: 16, fontWeight: FontWeight.w600)),
                     ],
                   ),
                 ),
@@ -728,7 +833,7 @@ class _CreateAbhaPageState extends State<CreateAbhaPage>
         titleSpacing: 0,
         leadingWidth: 72,
         leading: Padding(
-          padding: const EdgeInsets.only(left: 16, top: 8, bottom: 8),
+          padding: const EdgeInsets.only(left: 16, top: 10, bottom: 10),
           child: IconButton(
             onPressed: () {
               _pollTimer?.cancel();
@@ -741,19 +846,23 @@ class _CreateAbhaPageState extends State<CreateAbhaPage>
               side: const BorderSide(color: Color(0xFFD5E2E8)),
               elevation: 0,
             ),
-            icon: const Icon(Icons.arrow_back_ios_new_rounded, size: 18, color: AppColors.textPrimary),
+            icon: const Icon(Icons.arrow_back_ios_new_rounded,
+                size: 18, color: AppColors.textPrimary),
           ),
         ),
         title: Text(
           'Create ABHA Account',
-          style: GoogleFonts.poppins(fontSize: 21, fontWeight: FontWeight.w700, color: AppColors.primary),
+          style: GoogleFonts.dmSans(
+              fontSize: 18,
+              fontWeight: FontWeight.w700,
+              color: AppColors.primary),
         ),
       ),
       bottomNavigationBar: SafeArea(
         top: false,
-        minimum: const EdgeInsets.fromLTRB(16, 8, 16, 16),
+        minimum: const EdgeInsets.fromLTRB(16, 8, 16, 14),
         child: SizedBox(
-          height: 52,
+          height: 48,
           child: ElevatedButton(
             onPressed: _isLoading || _isPolling ? null : _onContinuePressed,
             child: _isLoading || _isPolling
@@ -761,11 +870,15 @@ class _CreateAbhaPageState extends State<CreateAbhaPage>
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: [
                       const SizedBox(
-                        width: 20, height: 20,
-                        child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                        width: 20,
+                        height: 20,
+                        child: CircularProgressIndicator(
+                            strokeWidth: 2, color: Colors.white),
                       ),
                       const SizedBox(width: 12),
-                      Text(_isPolling ? 'Verifying... ($_pollAttempt/10)' : 'Processing...'),
+                      Text(_isPolling
+                          ? 'Verifying... ($_pollAttempt/10)'
+                          : 'Processing...'),
                     ],
                   )
                 : Text(_continueButtonText),
@@ -773,7 +886,7 @@ class _CreateAbhaPageState extends State<CreateAbhaPage>
         ),
       ),
       body: SingleChildScrollView(
-        padding: const EdgeInsets.fromLTRB(16, 16, 16, 16),
+        padding: const EdgeInsets.fromLTRB(16, 12, 16, 14),
         child: Center(
           child: ConstrainedBox(
             constraints: const BoxConstraints(maxWidth: 920),
@@ -790,7 +903,8 @@ class _CreateAbhaPageState extends State<CreateAbhaPage>
                 if (_flowState != 'REGISTERED') ...[
                   _ClassicSection(
                     title: 'Patient Details',
-                    subtitle: 'Enter the patient identity details required for ABHA creation.',
+                    subtitle:
+                        'Enter the patient identity details required for ABHA creation.',
                     child: Column(
                       children: [
                         _buildResponsivePair(
@@ -813,7 +927,7 @@ class _CreateAbhaPageState extends State<CreateAbhaPage>
                             ),
                           ),
                         ),
-                        const SizedBox(height: 16),
+                        const SizedBox(height: 12),
                         _buildField(
                           label: 'Aadhaar Number',
                           child: TextField(
@@ -826,10 +940,11 @@ class _CreateAbhaPageState extends State<CreateAbhaPage>
                       ],
                     ),
                   ),
-                  const SizedBox(height: 16),
+                  const SizedBox(height: 12),
                   _ClassicSection(
                     title: 'Authentication Method',
-                    subtitle: 'Choose how the beneficiary will complete identity verification.',
+                    subtitle:
+                        'Choose how the beneficiary will complete identity verification.',
                     child: LayoutBuilder(
                       builder: (context, constraints) {
                         final vertical = constraints.maxWidth < 560;
@@ -837,28 +952,43 @@ class _CreateAbhaPageState extends State<CreateAbhaPage>
                           selected: _authMethod == 'aadhaar',
                           icon: Icons.phone_android_rounded,
                           title: 'Aadhaar OTP',
-                          description: 'Recommended for standard ABHA onboarding.',
-                          onTap: _flowState == 'IDLE' ? () => setState(() => _authMethod = 'aadhaar') : () {},
+                          description:
+                              'Recommended for standard ABHA onboarding.',
+                          onTap: _flowState == 'IDLE'
+                              ? () => setState(() => _authMethod = 'aadhaar')
+                              : () {},
                         );
                         final faceChoice = _AuthChoice(
                           selected: _authMethod == 'face',
                           icon: Icons.face_retouching_natural_rounded,
                           title: 'Face Authentication',
-                          description: 'Opens ABDM app for device-assisted face verification.',
-                          onTap: _flowState == 'IDLE' ? () => setState(() => _authMethod = 'face') : () {},
+                          description:
+                              'Opens ABDM app for device-assisted face verification.',
+                          onTap: _flowState == 'IDLE'
+                              ? () => setState(() => _authMethod = 'face')
+                              : () {},
                         );
 
                         if (vertical) {
-                          return Column(children: [aadhaarChoice, const SizedBox(height: 12), faceChoice]);
+                          return Column(children: [
+                            aadhaarChoice,
+                            const SizedBox(height: 10),
+                            faceChoice
+                          ]);
                         }
-                        return Row(children: [Expanded(child: aadhaarChoice), const SizedBox(width: 12), Expanded(child: faceChoice)]);
+                        return Row(children: [
+                          Expanded(child: aadhaarChoice),
+                          const SizedBox(width: 10),
+                          Expanded(child: faceChoice)
+                        ]);
                       },
                     ),
                   ),
-                  const SizedBox(height: 16),
+                  const SizedBox(height: 12),
                   _ClassicSection(
                     title: 'Consent Declaration',
-                    subtitle: 'Review and confirm the mandatory declarations before proceeding.',
+                    subtitle:
+                        'Review and confirm the mandatory declarations before proceeding.',
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
@@ -872,28 +1002,58 @@ class _CreateAbhaPageState extends State<CreateAbhaPage>
                           ),
                           child: Text(
                             'I, $patientName, hereby declare that:',
-                            style: GoogleFonts.inter(fontSize: 13, fontWeight: FontWeight.w700, color: AppColors.textPrimary),
+                            style: GoogleFonts.inter(
+                                fontSize: 12,
+                                fontWeight: FontWeight.w700,
+                                color: AppColors.textPrimary),
                           ),
                         ),
-                        const SizedBox(height: 14),
-                        const _ConsentParagraph(
-                          text: 'I am voluntarily sharing my Aadhaar Number / Virtual ID issued by the Unique Identification Authority of India ("UIDAI"), and my demographic information for the purpose of creating an Ayushman Bharat Health Account number ("ABHA number") and Ayushman Bharat Health Account address ("ABHA Address"). I authorize NHA to use my Aadhaar number / Virtual ID for performing Aadhaar based authentication with UIDAI as per the provisions of the Aadhaar (Targeted Delivery of Financial and other Subsidies, Benefits and Services) Act, 2016 for the aforesaid purpose. I understand that UIDAI will share my e-KYC details, or response of "Yes" with NHA upon successful authentication.',
-                        ),
                         const SizedBox(height: 12),
-                        const _DisabledConsentTile(
-                          text: 'I intend to create Ayushman Bharat Health Account Number ("ABHA number") and Ayushman Bharat Health Account address ("ABHA Address") using document other than Aadhaar. (This option is disabled for Aadhaar-based creation)',
+                        const _ConsentParagraph(
+                          text:
+                              'I am voluntarily sharing my Aadhaar Number / Virtual ID issued by the Unique Identification Authority of India ("UIDAI"), and my demographic information for the purpose of creating an Ayushman Bharat Health Account number ("ABHA number") and Ayushman Bharat Health Account address ("ABHA Address"). I authorize NHA to use my Aadhaar number / Virtual ID for performing Aadhaar based authentication with UIDAI as per the provisions of the Aadhaar (Targeted Delivery of Financial and other Subsidies, Benefits and Services) Act, 2016 for the aforesaid purpose. I understand that UIDAI will share my e-KYC details, or response of "Yes" with NHA upon successful authentication.',
                         ),
                         const SizedBox(height: 10),
-                        _ConsentCheckTile(value: _linkRecords, text: 'I consent to usage of my ABHA address and ABHA number for linking of my legacy (past) health records and those which will be generated during this encounter.', onChanged: (v) => setState(() => _linkRecords = v ?? false)),
-                        _ConsentCheckTile(value: _shareRecords, text: 'I authorize the sharing of all my health records with healthcare provider(s) for the purpose of providing healthcare services to me during this encounter.', onChanged: (v) => setState(() => _shareRecords = v ?? false)),
-                        _ConsentCheckTile(value: _publicHealthConsent, text: 'I consent to the anonymization and subsequent use of my health records for public health purposes.', onChanged: (v) => setState(() => _publicHealthConsent = v ?? false)),
-                        _ConsentCheckTile(value: _workerConfirmed, text: 'I, (healthcare worker), confirm that I have duly informed and explained the beneficiary of the contents of consent for aforementioned purposes.', onChanged: (v) => setState(() => _workerConfirmed = v ?? false)),
-                        _ConsentCheckTile(value: _patientConfirmed, text: 'I, $patientName, have been explained about the consent as stated above and hereby provide my consent for the aforementioned purposes.', onChanged: (v) => setState(() => _patientConfirmed = v ?? false)),
+                        const _DisabledConsentTile(
+                          text:
+                              'I intend to create Ayushman Bharat Health Account Number ("ABHA number") and Ayushman Bharat Health Account address ("ABHA Address") using document other than Aadhaar. (This option is disabled for Aadhaar-based creation)',
+                        ),
+                        const SizedBox(height: 8),
+                        _ConsentCheckTile(
+                            value: _linkRecords,
+                            text:
+                                'I consent to usage of my ABHA address and ABHA number for linking of my legacy (past) health records and those which will be generated during this encounter.',
+                            onChanged: (v) =>
+                                setState(() => _linkRecords = v ?? false)),
+                        _ConsentCheckTile(
+                            value: _shareRecords,
+                            text:
+                                'I authorize the sharing of all my health records with healthcare provider(s) for the purpose of providing healthcare services to me during this encounter.',
+                            onChanged: (v) =>
+                                setState(() => _shareRecords = v ?? false)),
+                        _ConsentCheckTile(
+                            value: _publicHealthConsent,
+                            text:
+                                'I consent to the anonymization and subsequent use of my health records for public health purposes.',
+                            onChanged: (v) => setState(
+                                () => _publicHealthConsent = v ?? false)),
+                        _ConsentCheckTile(
+                            value: _workerConfirmed,
+                            text:
+                                'I, (healthcare worker), confirm that I have duly informed and explained the beneficiary of the contents of consent for aforementioned purposes.',
+                            onChanged: (v) =>
+                                setState(() => _workerConfirmed = v ?? false)),
+                        _ConsentCheckTile(
+                            value: _patientConfirmed,
+                            text:
+                                'I, $patientName, have been explained about the consent as stated above and hereby provide my consent for the aforementioned purposes.',
+                            onChanged: (v) =>
+                                setState(() => _patientConfirmed = v ?? false)),
                       ],
                     ),
                   ),
                 ],
-                const SizedBox(height: 92),
+                const SizedBox(height: 84),
               ],
             ),
           ),
@@ -905,7 +1065,7 @@ class _CreateAbhaPageState extends State<CreateAbhaPage>
   // ─── OTP Section Widget ───────────────────────────────
   Widget _buildOtpSection() {
     return Container(
-      margin: const EdgeInsets.only(bottom: 16),
+      margin: const EdgeInsets.only(bottom: 12),
       child: _ClassicSection(
         title: 'Enter OTP',
         subtitle: 'OTP has been sent to your Aadhaar-linked mobile number.',
@@ -915,25 +1075,26 @@ class _CreateAbhaPageState extends State<CreateAbhaPage>
               controller: _otpController,
               keyboardType: TextInputType.number,
               maxLength: 6,
-              style: GoogleFonts.poppins(
-                fontSize: 24,
+              style: GoogleFonts.dmSans(
+                fontSize: 20,
                 fontWeight: FontWeight.w700,
-                letterSpacing: 8,
+                letterSpacing: 6,
                 color: AppColors.textPrimary,
               ),
               textAlign: TextAlign.center,
               decoration: InputDecoration(
                 hintText: '------',
-                hintStyle: GoogleFonts.poppins(
-                  fontSize: 24,
+                hintStyle: GoogleFonts.dmSans(
+                  fontSize: 20,
                   fontWeight: FontWeight.w400,
-                  letterSpacing: 8,
+                  letterSpacing: 6,
                   color: AppColors.textHint,
                 ),
                 counterText: '',
                 filled: true,
                 fillColor: const Color(0xFFFBFDFE),
-                contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 20),
+                contentPadding:
+                    const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
                 border: OutlineInputBorder(
                   borderRadius: BorderRadius.circular(14),
                   borderSide: const BorderSide(color: Color(0xFFD5EBEF)),
@@ -944,11 +1105,12 @@ class _CreateAbhaPageState extends State<CreateAbhaPage>
                 ),
                 focusedBorder: OutlineInputBorder(
                   borderRadius: BorderRadius.circular(14),
-                  borderSide: const BorderSide(color: AppColors.primary, width: 1.3),
+                  borderSide:
+                      const BorderSide(color: AppColors.primary, width: 1.3),
                 ),
               ),
             ),
-            const SizedBox(height: 16),
+            const SizedBox(height: 12),
             Row(
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
@@ -983,18 +1145,27 @@ class _CreateAbhaPageState extends State<CreateAbhaPage>
   // ─── Registered Patient Card ──────────────────────────
   Widget _buildRegisteredPatientCard() {
     final data = _patientData ?? {};
-    final firstName = (data['firstName'] ?? data['first_name'] ?? data['name'] ?? '').toString();
+    final firstName =
+        (data['firstName'] ?? data['first_name'] ?? data['name'] ?? '')
+            .toString();
     final lastName = (data['lastName'] ?? data['last_name'] ?? '').toString();
     final name = '$firstName $lastName'.trim();
-    final displayName = name.isNotEmpty ? name : _patientNameController.text.trim();
-    final mobile = (data['mobile'] ?? data['phone'] ?? _mobileController.text.trim()).toString();
+    final displayName =
+        name.isNotEmpty ? name : _patientNameController.text.trim();
+    final mobile =
+        (data['mobile'] ?? data['phone'] ?? _mobileController.text.trim())
+            .toString();
     final gender = _displayGender((data['gender'] ?? '').toString());
-    final age = _calculateAgeFromParts(data['dayOfBirth'], data['monthOfBirth'], data['yearOfBirth']);
+    final age = _calculateAgeFromParts(
+        data['dayOfBirth'], data['monthOfBirth'], data['yearOfBirth']);
     final abhaId = _registeredAbhaNumber ?? _extractAbhaNumber(data) ?? '';
 
     // Subtitle reflects whether the ABHA account was newly created or already existed.
-    final isExisting = (data['message'] ?? '').toString().toLowerCase().contains('already exist')
-        || _registeredPatientId != null;
+    final isExisting = (data['message'] ?? '')
+            .toString()
+            .toLowerCase()
+            .contains('already exist') ||
+        _registeredPatientId != null;
     final subtitle = isExisting
         ? 'Existing ABHA account found for this patient.'
         : 'ABHA account created successfully.';
@@ -1017,7 +1188,8 @@ class _CreateAbhaPageState extends State<CreateAbhaPage>
               ),
               child: Row(
                 children: [
-                  const Icon(Icons.check_circle, color: Color(0xFF2E7D32), size: 22),
+                  const Icon(Icons.check_circle,
+                      color: Color(0xFF2E7D32), size: 22),
                   const SizedBox(width: 10),
                   Expanded(
                     child: Text(
@@ -1039,8 +1211,7 @@ class _CreateAbhaPageState extends State<CreateAbhaPage>
             _buildInfoRow('Age:', age != '0' ? '$age years' : '—'),
             _buildInfoRow('Gender:', gender),
             _buildInfoRow('Phone:', mobile.isNotEmpty ? '+91$mobile' : '—'),
-            if (abhaId.isNotEmpty)
-              _buildInfoRow('ABHA ID:', abhaId),
+            if (abhaId.isNotEmpty) _buildInfoRow('ABHA ID:', abhaId),
           ],
         ),
       ),
@@ -1086,7 +1257,9 @@ class _CreateAbhaPageState extends State<CreateAbhaPage>
                   ),
                   if (label == 'ABHA ID:' && value.isNotEmpty) ...[
                     const SizedBox(width: 6),
-                    Icon(Icons.copy_rounded, size: 14, color: AppColors.primary.withValues(alpha: 0.6)),
+                    Icon(Icons.copy_rounded,
+                        size: 14,
+                        color: AppColors.primary.withValues(alpha: 0.6)),
                   ],
                 ],
               ),
@@ -1111,7 +1284,8 @@ class _CreateAbhaPageState extends State<CreateAbhaPage>
   }
 
   String get _displayPatientName {
-    final value = _patientNameController.text.trim().replaceAll(RegExp(r'\s+'), ' ');
+    final value =
+        _patientNameController.text.trim().replaceAll(RegExp(r'\s+'), ' ');
     return value.isEmpty ? '[Patient Name]' : value;
   }
 
@@ -1119,8 +1293,12 @@ class _CreateAbhaPageState extends State<CreateAbhaPage>
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text(label, style: GoogleFonts.inter(fontSize: 12.5, fontWeight: FontWeight.w700, color: AppColors.textPrimary)),
-        const SizedBox(height: 8),
+        Text(label,
+            style: GoogleFonts.inter(
+                fontSize: 11.5,
+                fontWeight: FontWeight.w700,
+                color: AppColors.textPrimary)),
+        const SizedBox(height: 6),
         child,
       ],
     );
@@ -1130,11 +1308,15 @@ class _CreateAbhaPageState extends State<CreateAbhaPage>
     return LayoutBuilder(
       builder: (context, constraints) {
         if (constraints.maxWidth < 560) {
-          return Column(children: [left, const SizedBox(height: 16), right]);
+          return Column(children: [left, const SizedBox(height: 12), right]);
         }
         return Row(
           crossAxisAlignment: CrossAxisAlignment.start,
-          children: [Expanded(child: left), const SizedBox(width: 16), Expanded(child: right)],
+          children: [
+            Expanded(child: left),
+            const SizedBox(width: 12),
+            Expanded(child: right)
+          ],
         );
       },
     );
@@ -1143,14 +1325,23 @@ class _CreateAbhaPageState extends State<CreateAbhaPage>
   InputDecoration _decoration(String hint) {
     return InputDecoration(
       hintText: hint,
-      hintStyle: GoogleFonts.inter(fontSize: 13.5, color: AppColors.textSecondary),
+      hintStyle:
+          GoogleFonts.inter(fontSize: 12, color: AppColors.textSecondary),
       filled: true,
       fillColor: const Color(0xFFFBFDFE),
-      contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
-      border: OutlineInputBorder(borderRadius: BorderRadius.circular(14), borderSide: const BorderSide(color: Color(0xFFD5EBEF))),
-      enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(14), borderSide: const BorderSide(color: Color(0xFFD5EBEF))),
-      focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(14), borderSide: const BorderSide(color: AppColors.primary, width: 1.3)),
-      disabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(14), borderSide: const BorderSide(color: Color(0xFFE8EEF0))),
+      contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 13),
+      border: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(13),
+          borderSide: const BorderSide(color: Color(0xFFD5EBEF))),
+      enabledBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(13),
+          borderSide: const BorderSide(color: Color(0xFFD5EBEF))),
+      focusedBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(13),
+          borderSide: const BorderSide(color: AppColors.primary, width: 1.2)),
+      disabledBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(13),
+          borderSide: const BorderSide(color: Color(0xFFE8EEF0))),
     );
   }
 }
@@ -1160,7 +1351,8 @@ class _CreateAbhaPageState extends State<CreateAbhaPage>
 // ═══════════════════════════════════════════════════════
 
 class _ClassicSection extends StatelessWidget {
-  const _ClassicSection({required this.title, required this.subtitle, required this.child});
+  const _ClassicSection(
+      {required this.title, required this.subtitle, required this.child});
   final String title;
   final String subtitle;
   final Widget child;
@@ -1169,20 +1361,31 @@ class _ClassicSection extends StatelessWidget {
   Widget build(BuildContext context) {
     return Container(
       width: double.infinity,
-      padding: const EdgeInsets.all(18),
+      padding: const EdgeInsets.all(15),
       decoration: BoxDecoration(
         color: Colors.white,
-        borderRadius: BorderRadius.circular(20),
+        borderRadius: BorderRadius.circular(18),
         border: Border.all(color: const Color(0xFFDCEBF0)),
-        boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.03), blurRadius: 14, offset: const Offset(0, 6))],
+        boxShadow: [
+          BoxShadow(
+              color: Colors.black.withValues(alpha: 0.03),
+              blurRadius: 10,
+              offset: const Offset(0, 4))
+        ],
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(title, style: GoogleFonts.poppins(fontSize: 17, fontWeight: FontWeight.w600, color: AppColors.textPrimary)),
-          const SizedBox(height: 5),
-          Text(subtitle, style: GoogleFonts.inter(fontSize: 12.5, height: 1.5, color: AppColors.textSecondary)),
-          const SizedBox(height: 16),
+          Text(title,
+              style: GoogleFonts.dmSans(
+                  fontSize: 15.5,
+                  fontWeight: FontWeight.w700,
+                  color: AppColors.textPrimary)),
+          const SizedBox(height: 4),
+          Text(subtitle,
+              style: GoogleFonts.inter(
+                  fontSize: 11.5, height: 1.4, color: AppColors.textSecondary)),
+          const SizedBox(height: 13),
           child,
         ],
       ),
@@ -1191,7 +1394,12 @@ class _ClassicSection extends StatelessWidget {
 }
 
 class _AuthChoice extends StatelessWidget {
-  const _AuthChoice({required this.selected, required this.icon, required this.title, required this.description, required this.onTap});
+  const _AuthChoice(
+      {required this.selected,
+      required this.icon,
+      required this.title,
+      required this.description,
+      required this.onTap});
   final bool selected;
   final IconData icon;
   final String title;
@@ -1202,35 +1410,55 @@ class _AuthChoice extends StatelessWidget {
   Widget build(BuildContext context) {
     return InkWell(
       onTap: onTap,
-      borderRadius: BorderRadius.circular(16),
+      borderRadius: BorderRadius.circular(14),
       child: Container(
-        padding: const EdgeInsets.all(15),
+        padding: const EdgeInsets.all(13),
         decoration: BoxDecoration(
           color: selected ? AppColors.accentSoft : const Color(0xFFFCFEFF),
-          borderRadius: BorderRadius.circular(16),
-          border: Border.all(color: selected ? AppColors.primary : const Color(0xFFDCE8EC), width: selected ? 1.8 : 1),
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(
+              color: selected ? AppColors.primary : const Color(0xFFDCE8EC),
+              width: selected ? 1.8 : 1),
         ),
         child: Row(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Icon(selected ? Icons.radio_button_checked : Icons.radio_button_off, size: 20, color: selected ? AppColors.primary : AppColors.textHint),
-            const SizedBox(width: 10),
+            Icon(selected ? Icons.radio_button_checked : Icons.radio_button_off,
+                size: 18,
+                color: selected ? AppColors.primary : AppColors.textHint),
+            const SizedBox(width: 8),
             Container(
-              width: 32, height: 32,
+              width: 30,
+              height: 30,
               decoration: BoxDecoration(
-                color: selected ? AppColors.primary.withValues(alpha: 0.12) : const Color(0xFFF1F6F8),
-                borderRadius: BorderRadius.circular(10),
+                color: selected
+                    ? AppColors.primary.withValues(alpha: 0.12)
+                    : const Color(0xFFF1F6F8),
+                borderRadius: BorderRadius.circular(9),
               ),
-              child: Icon(icon, size: 17, color: selected ? AppColors.primary : AppColors.textSecondary),
+              child: Icon(icon,
+                  size: 16,
+                  color:
+                      selected ? AppColors.primary : AppColors.textSecondary),
             ),
-            const SizedBox(width: 10),
+            const SizedBox(width: 8),
             Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(title, style: GoogleFonts.inter(fontSize: 13.5, fontWeight: FontWeight.w700, color: selected ? AppColors.primary : AppColors.textPrimary)),
-                  const SizedBox(height: 4),
-                  Text(description, style: GoogleFonts.inter(fontSize: 11.5, height: 1.45, color: AppColors.textSecondary)),
+                  Text(title,
+                      style: GoogleFonts.dmSans(
+                          fontSize: 12.5,
+                          fontWeight: FontWeight.w700,
+                          color: selected
+                              ? AppColors.primary
+                              : AppColors.textPrimary)),
+                  const SizedBox(height: 3),
+                  Text(description,
+                      style: GoogleFonts.inter(
+                          fontSize: 10.8,
+                          height: 1.35,
+                          color: AppColors.textSecondary)),
                 ],
               ),
             ),
@@ -1247,7 +1475,9 @@ class _ConsentParagraph extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Text(text, style: GoogleFonts.inter(fontSize: 12.5, height: 1.7, color: AppColors.textSecondary));
+    return Text(text,
+        style: GoogleFonts.inter(
+            fontSize: 11.5, height: 1.55, color: AppColors.textSecondary));
   }
 }
 
@@ -1260,20 +1490,25 @@ class _DisabledConsentTile extends StatelessWidget {
     return Opacity(
       opacity: 0.46,
       child: Container(
-        padding: const EdgeInsets.all(14),
+        padding: const EdgeInsets.all(12),
         decoration: BoxDecoration(
           color: const Color(0xFFF7FAFB),
-          borderRadius: BorderRadius.circular(16),
+          borderRadius: BorderRadius.circular(14),
           border: Border.all(color: const Color(0xFFE5EEF1)),
         ),
         child: Row(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Checkbox(value: false, onChanged: null),
+            Transform.scale(
+                scale: 0.9, child: Checkbox(value: false, onChanged: null)),
             Expanded(
               child: Padding(
-                padding: const EdgeInsets.only(top: 10),
-                child: Text(text, style: GoogleFonts.inter(fontSize: 12.5, height: 1.7, color: AppColors.textSecondary)),
+                padding: const EdgeInsets.only(top: 8),
+                child: Text(text,
+                    style: GoogleFonts.inter(
+                        fontSize: 11.5,
+                        height: 1.55,
+                        color: AppColors.textSecondary)),
               ),
             ),
           ],
@@ -1284,7 +1519,8 @@ class _DisabledConsentTile extends StatelessWidget {
 }
 
 class _ConsentCheckTile extends StatelessWidget {
-  const _ConsentCheckTile({required this.value, required this.text, required this.onChanged});
+  const _ConsentCheckTile(
+      {required this.value, required this.text, required this.onChanged});
   final bool value;
   final String text;
   final ValueChanged<bool?> onChanged;
@@ -1292,21 +1528,38 @@ class _ConsentCheckTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      margin: const EdgeInsets.only(bottom: 10),
-      padding: const EdgeInsets.all(14),
+      margin: const EdgeInsets.only(bottom: 8),
+      padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
         color: const Color(0xFFFBFDFE),
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: const Color(0xFFE3EDF0)),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(
+          color: value
+              ? AppColors.primary.withValues(alpha: 0.4)
+              : const Color(0xFFE3EDF0),
+        ),
       ),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Checkbox(value: value, onChanged: onChanged, activeColor: AppColors.primary, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(6))),
+          Transform.scale(
+            scale: 0.92,
+            child: Checkbox(
+              value: value,
+              onChanged: onChanged,
+              activeColor: AppColors.primary,
+              shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(6)),
+            ),
+          ),
           Expanded(
             child: Padding(
-              padding: const EdgeInsets.only(top: 10),
-              child: Text(text, style: GoogleFonts.inter(fontSize: 12.5, height: 1.65, color: AppColors.textPrimary)),
+              padding: const EdgeInsets.only(top: 8),
+              child: Text(text,
+                  style: GoogleFonts.inter(
+                      fontSize: 11.5,
+                      height: 1.5,
+                      color: AppColors.textPrimary)),
             ),
           ),
         ],
