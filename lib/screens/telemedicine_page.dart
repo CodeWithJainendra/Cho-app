@@ -941,7 +941,7 @@ class _DoctorDetailPageState extends State<_DoctorDetailPage> {
     setState(() => _isLaunchingConsultation = true);
     try {
       debugPrint(
-          '📞 Telemedicine: opening native consultation for doctor=${doc.id} patient=$patId');
+          '📞 Telemedicine: opening consultation flow for doctor=${doc.id} patient=$patId');
       try {
         final choId = await ApiService.getChoId();
         debugPrint('🆔 Telemedicine: CHO ID=$choId');

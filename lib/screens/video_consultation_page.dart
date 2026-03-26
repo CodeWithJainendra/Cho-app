@@ -55,10 +55,12 @@ class _VideoConsultationPageState extends State<VideoConsultationPage> {
   // then just assign srcObject when remote stream arrives.
   final _remoteRenderer = RTCVideoRenderer();
 
-  // Futures for renderer initialization — awaited in _initializeCall() to
-  // guarantee the native texture is fully ready before srcObject is set.
-  late final Future<void> _localRendererReady;
-  late final Future<void> _remoteRendererReady;
+  // Renderer initialization is lazy. The current CHO flow routes to WebView
+  // after doctor acceptance, so we must not bootstrap flutter_webrtc while the
+  // user is still on the waiting screen.
+  Future<void>? _localRendererReady;
+  Future<void>? _remoteRendererReady;
+  bool _renderersInitialized = false;
 
   // ── Call state ───────────────────────────────────────────
   bool _connecting = false;
@@ -113,11 +115,6 @@ class _VideoConsultationPageState extends State<VideoConsultationPage> {
     // icons so they are visible.  Restored to dark icons in dispose().
     SystemChrome.setSystemUIOverlayStyle(SystemUiOverlayStyle.light);
 
-    // Initialize BOTH renderers early (matching DoctorsApp: renderers ready
-    // before call starts, just assign srcObject when stream arrives).
-    _localRendererReady = _localRenderer.initialize();
-    _remoteRendererReady = _remoteRenderer.initialize();
-
     // Initialise PIP position (top-right corner, matching RN x=SCREEN_WIDTH-140, y=60)
     WidgetsBinding.instance.addPostFrameCallback((_) {
       final size = MediaQuery.of(context).size;
@@ -165,6 +162,15 @@ class _VideoConsultationPageState extends State<VideoConsultationPage> {
   // CALL INITIALISATION (matching RN initializeCall)
   // ══════════════════════════════════════════════════════════
 
+  Future<void> _ensureRenderersInitialized() async {
+    if (_renderersInitialized) return;
+    _localRendererReady ??= _localRenderer.initialize();
+    _remoteRendererReady ??= _remoteRenderer.initialize();
+    await _localRendererReady;
+    await _remoteRendererReady;
+    _renderersInitialized = true;
+  }
+
   Future<void> _initializeCall() async {
     if (_connecting || _connected) return;
 
@@ -188,10 +194,8 @@ class _VideoConsultationPageState extends State<VideoConsultationPage> {
       }
 
       // ── Step 0: Await renderer initialization ──
-      // Both renderers were kicked off in initState.
       debugPrint('⏳ Step 0: Awaiting renderer initialization...');
-      await _localRendererReady;
-      await _remoteRendererReady;
+      await _ensureRenderersInitialized();
       debugPrint('✅ Local renderer ready — textureId=${_localRenderer.textureId}');
       debugPrint('✅ Remote renderer ready — textureId=${_remoteRenderer.textureId}');
 
@@ -838,6 +842,11 @@ class _VideoConsultationPageState extends State<VideoConsultationPage> {
         debugPrint(
           '🌐 VideoConsultation: opening WebView VC room=$roomId appointmentId=$appointmentId doctorId=${widget.doctorId} choId=$choId',
         );
+        // CRITICAL: Disconnect native Flutter socket BEFORE opening WebView.
+        // The WebView's /telemed/ page will create its OWN socket connection.
+        // Having both connected to the same room causes duplicate participants
+        // and ICE negotiation conflicts → video won't work.
+        _vc.disconnect();
         if (!mounted) return;
         await Navigator.pushReplacement(
           context,

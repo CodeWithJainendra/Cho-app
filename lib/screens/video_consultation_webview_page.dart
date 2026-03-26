@@ -15,16 +15,22 @@ import 'package:webview_flutter_android/webview_flutter_android.dart';
 import '../services/api_service.dart';
 import '../services/video_call_service.dart';
 
-/// Full-screen WebView video consultation.
+/// Full-screen WebView video consultation for CHO (Community Health Officer).
 ///
 /// Instead of running WebRTC inside a Flutter widget (which suffers from
 /// Texture/SurfaceTexture binding issues on certain Qualcomm devices), we
-/// open the same web-based consultation UI that the doctor uses, embedded in
-/// Android WebView.  The WebView's built-in Chromium stack handles WebRTC
-/// natively — no flutter_webrtc, no EglRenderer race conditions.
+/// open the CHO-specific web-based consultation UI embedded in Android WebView.
+/// The WebView's built-in Chromium stack handles WebRTC natively — no
+/// flutter_webrtc, no EglRenderer race conditions.
 ///
-/// URL: https://dhanvantari.net.in/tele_back/?roomid=...&prescriptionid=...
-///      &appointmentId=...&doctorid=...&choid=...
+/// IMPORTANT: CHO and Doctor use DIFFERENT endpoints:
+///   CHO    → /telemed/?room=...&usertype=cho&patient_id=...&appointment_id=...
+///   Doctor → /tele_back/?roomid=...&prescriptionid=...&appointmentId=...&doctorid=...&choid=...
+///
+/// The CHO loads /telemed/ which shows only the video call interface.
+/// The Doctor loads /tele_back/ which includes the /pres/ prescription iframe.
+/// When the doctor saves a prescription, the CHO receives it via REST polling
+/// (the doctor's upload does NOT send a Socket.IO message to the room).
 class VideoConsultationWebViewPage extends StatefulWidget {
   final String roomId;
   final int appointmentId;
@@ -94,30 +100,33 @@ class _VideoConsultationWebViewPageState
     // Request camera + mic before building the WebView so Android grants them
     // automatically when the web page asks via getUserMedia.
     _requestPermissionsThenLoad();
-    _startNativeChatMonitor();
+    // NOTE: We do NOT start a native Flutter socket here.
+    // The WebView's /telemed/ page handles its own WebSocket + WebRTC video.
+    // A second socket from Flutter to the same room would cause conflicts
+    // (duplicate participants, competing ICE negotiation).
     // Start a polling fallback: if no prescription arrives via WS/bridge
     // within 90 seconds, proactively try to fetch it via REST API.
     _startPrescriptionPollTimer();
   }
 
   /// Start a polling timer that repeatedly tries to fetch the prescription
-  /// via REST after 60 s (doctor typically finishes prescription by then).
+  /// via REST.  Doctor typically saves the prescription within 30–60 s of
+  /// starting the call.  We poll aggressively (every 15 s, starting at 10 s)
+  /// so the CHO sees the PDF as soon as possible.
   void _startPrescriptionPollTimer() {
-    // First probe after 60 s, then every 30 s up to 5 minutes.
     var attempts = 0;
-    const maxAttempts = 8;
-    _prescriptionPollTimer = Timer.periodic(const Duration(seconds: 30), (t) async {
+    const maxAttempts = 20; // up to 5 minutes of polling (20 × 15 s)
+    _prescriptionPollTimer = Timer.periodic(const Duration(seconds: 15), (t) async {
       if (_prescriptionFound || !mounted) {
         t.cancel();
         return;
       }
       attempts++;
-      if (attempts < 2) return; // skip first tick (60 s total initial wait)
       if (attempts > maxAttempts) {
         t.cancel();
         return;
       }
-      debugPrint('⏱️ PrescriptionPoll: attempt $attempts — fetching via API...');
+      debugPrint('⏱️ PrescriptionPoll: attempt $attempts/$maxAttempts — fetching via API...');
       try {
         await _fetchAndShowPrescription(widget.appointmentId.toString());
       } catch (e) {
@@ -147,45 +156,14 @@ class _VideoConsultationWebViewPageState
     if (mounted) _initWebView();
   }
 
-  Future<void> _startNativeChatMonitor() async {
-    if (_nativeChatMonitorStarted) return;
-    _nativeChatMonitorStarted = true;
-
-    final vc = VideoCallService.instance;
-    try {
-      debugPrint('💬 NativeChat: starting passive monitor room=${widget.roomId}');
-      vc.connect();
-      final connected = await vc.waitForConnection(
-        timeout: const Duration(seconds: 5),
-      );
-      if (!connected) {
-        debugPrint('⚠️ NativeChat: socket connection failed — prescription via JS bridge only');
-        return;
-      }
-
-      // Register real-time listener — fires whenever the server pushes a chat
-      // message (including prescription file messages). This is the same path
-      // the reference app (useChat.js) uses: no polling, event-driven only.
-      vc.onChatMessage(_handleNativeSocketMessage);
-
-      // One-shot history fetch on connect (catches messages sent before we joined).
-      vc.getChatHistory(widget.roomId, (error, messages) {
-        if (error != null) {
-          debugPrint('⚠️ NativeChat: getChatHistory error: $error');
-          return;
-        }
-        if (messages == null || messages.isEmpty) return;
-        debugPrint('💬 NativeChat: fetched ${messages.length} historical messages');
-        for (final raw in messages) {
-          if (raw is Map) {
-            _handleNativeSocketMessage(Map<String, dynamic>.from(raw));
-          }
-        }
-      });
-    } catch (e) {
-      debugPrint('⚠️ NativeChat: monitor init failed: $e');
-    }
-  }
+  // NOTE: _startNativeChatMonitor has been REMOVED.
+  // The WebView's /telemed/ page handles its own WebSocket connection for
+  // video and real-time events. A second Flutter-side socket into the same
+  // room creates a duplicate participant and causes ICE/video conflicts.
+  // Prescription detection is handled by:
+  //   1. The /telemed/ page's built-in Firestore listeners (for CHO usertype)
+  //   2. The JS bridge injection (console.log hook in /pres/ iframe)
+  //   3. The REST polling fallback (_startPrescriptionPollTimer)
 
   void _handleNativeSocketMessage(Map<String, dynamic> raw) {
     if (!mounted || _prescriptionFound) return;
@@ -333,16 +311,13 @@ class _VideoConsultationWebViewPageState
   }
 
   void _initWebView() {
+    const choWebViewMode = 'CHO_TELEMED_V2';
+    // URL requested by User for CHO connection:
+    // https://dhanvantari.net.in/telemed/?room={roomId}&usertype=cho&patient_id=...&appointment_id=...
     final url = Uri.https(
       'dhanvantari.net.in',
-      '/tele_back/',
+      '/telemed/',
       {
-        'roomid': widget.roomId,
-        'prescriptionid': widget.appointmentId.toString(),
-        'appointmentId': widget.appointmentId.toString(),
-        'doctorid': widget.doctorId.toString(),
-        'choid': widget.choId.toString(),
-        // Keep legacy params too (backend pages sometimes still read these).
         'room': widget.roomId,
         'usertype': 'cho',
         'patient_id': widget.patientId.toString(),
@@ -350,7 +325,7 @@ class _VideoConsultationWebViewPageState
       },
     ).toString();
 
-    debugPrint('🌐 VideoWebView: loading $url');
+    debugPrint('🌐 VideoWebView[$choWebViewMode]: loading $url');
 
     _controller = WebViewController()
       ..setJavaScriptMode(JavaScriptMode.unrestricted)
@@ -374,8 +349,21 @@ class _VideoConsultationWebViewPageState
             final uri = Uri.tryParse(request.url);
             if (uri != null) {
               final path = uri.path.toLowerCase();
+
+              // ── BLOCK /tele_back/ for CHO ──────────────────────────────
+              // CHO must stay on /telemed/.  /tele_back/ is the DOCTOR's
+              // endpoint and would show the prescription-editing UI instead
+              // of the CHO's simple video-call view.  Block any redirect or
+              // iframe navigation to /tele_back/.
+              if (uri.host.contains('dhanvantari.net.in') &&
+                  path.startsWith('/tele_back')) {
+                debugPrint(
+                    '🚫 VideoWebView: BLOCKED navigation to /tele_back/ (doctor endpoint) → ${request.url}');
+                return NavigationDecision.prevent;
+              }
+
               final isTelemedCallPath =
-                  path.startsWith('/telemed') || path.startsWith('/tele_back');
+                  path.startsWith('/telemed') || path.startsWith('/pres');
 
               if (uri.host.contains('dhanvantari.net.in') &&
                   isTelemedCallPath) {
@@ -415,8 +403,8 @@ class _VideoConsultationWebViewPageState
                 return NavigationDecision.prevent;
               }
 
-              // When the web portal navigates away from call page
-              // (/telemed or /tele_back) it means
+              // When the web portal navigates away from the call page
+              // (/telemed or /pres) it means
               // either the call ended (redirect to /cho_module/ etc.) OR the
               // Django session expired (redirect to /login or /accounts/login).
               //
@@ -462,8 +450,8 @@ class _VideoConsultationWebViewPageState
             // Inject again after full load as a safety net
             // (e.g. for lazy-loaded modules that register their own XHR).
             _injectAuthToken();
-            // Ensure native socket monitor is running for prescription events.
-            _startNativeChatMonitor();
+            // No native Flutter socket here. The WebView owns signaling/media,
+            // and prescription detection falls back to JS bridge + REST polling.
           },
           onWebResourceError: (error) {
             // Ignore sub-frame errors (ads, analytics) — only surface main frame failures.
@@ -533,17 +521,23 @@ class _VideoConsultationWebViewPageState
 (function() {
   var token = '$safeToken';
   var phase = '$phase';
+  var forcedUserType = 'cho';
 
   // ── 1. localStorage ──────────────────────────────────────────────────────
   // React/Vue SPAs often read the token here on boot.
-  if (token) {
-    try {
+  try {
+    sessionStorage.setItem('userType', forcedUserType);
+    sessionStorage.setItem('usertype', forcedUserType);
+    localStorage.setItem('userType', forcedUserType);
+    localStorage.setItem('usertype', forcedUserType);
+    localStorage.setItem('role', forcedUserType);
+    if (token) {
       localStorage.setItem('token', token);
       localStorage.setItem('auth_token', token);
       localStorage.setItem('access_token', token);
       localStorage.setItem('authToken', token);
-    } catch(e) {}
-  }
+    }
+  } catch(e) {}
 
   // ── Helper: read csrftoken cookie ─────────────────────────────────────────
   // Django sets csrftoken as a non-HttpOnly cookie so JS can read it.
@@ -1038,108 +1032,106 @@ class _VideoConsultationWebViewPageState
            l.includes('presc') || l.includes('generate-prescription');
   }
 
-  // ── 6. Intercept fetch() RESPONSES for prescription API calls ────────────
-  // The page calls fetch('/appointment/api/.../prescription') or
-  // fetch('/prescription_api/generate-prescription') after the doctor submits.
-  // We intercept ALL fetch responses and scan them for prescription PDF URLs.
-  // Also catches: "prescription" Firestore write responses.
-  if (!window.__choFetchRespPatched) {
-    window.__choFetchRespPatched = true;
-    var _baseFetch = window.fetch.bind(window);
-    window.fetch = function(input, init) {
-      var result = _baseFetch(input, init);
+  // ── 6 + 7. Universal XHR + fetch response scanner ─────────────────────────
+  // KEY INSIGHT: tele_back/ uses Socket.IO long-POLLING (XHR to
+  // /socket.io/?transport=polling), NOT WebSocket.  Every socket message the
+  // doctor sends (including the prescription PDF) arrives as plain text in an
+  // XHR response body — e.g.:
+  //   97:42["message",{"type":"chat","message_type":"file","file_url":"data:…"}]
+  // Scanning ONLY prescription-specific URLs misses these entirely.
+  // We now scan ALL responses whose body contains a Socket.IO frame ("42[").
+  if (!window.__choUniversalRespScanner) {
+    window.__choUniversalRespScanner = true;
+    var _choSeenRespKeys = {};
+
+    // Shared helper: scan any response body for Socket.IO frames or prescription data.
+    window._choScanAnyBody = function(body, srcUrl) {
+      if (!body || typeof body !== 'string' || body.length < 5) return;
+      // Quick guard: only process if body has something relevant.
+      var hasFrame   = body.indexOf('42[') >= 0 || body.indexOf('42{') >= 0;
+      var hasPrDesc  = body.indexOf('getpdf') >= 0 ||
+                       body.indexOf('prescription') >= 0 ||
+                       body.indexOf('file_url') >= 0 ||
+                       body.indexOf('.pdf') >= 0;
+      if (!hasFrame && !hasPrDesc) return;
+      // De-duplicate (Socket.IO polls produce many identical payloads).
+      var key = (srcUrl || '').substring(0, 50) + '|' + body.substring(0, 80);
+      if (_choSeenRespKeys[key]) return;
+      _choSeenRespKeys[key] = 1;
+      console.log('📡 CHO scan: relevant body from ' + String(srcUrl || '?').substring(0, 100));
+      // 1. Full body as-is (may be a single frame or JSON blob)
+      _choCheckPrescription(body);
+      // 2. Split Socket.IO packet batches: frames separated by '\x1e' (RS char)
+      if (body.indexOf('\x1e') >= 0) {
+        body.split('\x1e').forEach(function(part) {
+          if (part.indexOf('42') === 0) _choCheckPrescription(part);
+        });
+      }
+      // 3. Socket.IO v2 length-prefixed framing: "NNN:42[...]" — strip prefix.
       try {
+        var si = 0;
+        while (si < body.length) {
+          var fi = body.indexOf(':42[', si);
+          if (fi < 0) break;
+          _choCheckPrescription(body.substring(fi + 1));
+          si = fi + 4;
+        }
+      } catch(e) {}
+      // 4. Pure JSON blob (prescription REST endpoint returning pdfUrl)
+      try {
+        var j = JSON.parse(body);
+        if (j && typeof j === 'object') {
+          var pdfUrl = _choPdfFromData(j);
+          if (pdfUrl && window.CHOPrescriptionBridge) {
+            console.log('📋 CHO: PDF URL from JSON resp → ' + pdfUrl);
+            window.CHOPrescriptionBridge.postMessage(JSON.stringify({pdfUrl: pdfUrl, appointmentId: ''}));
+          }
+        }
+      } catch(e) {}
+    };
+
+    // ── 6. Wrap XHR: scan ALL responses ──────────────────────────────────────
+    if (!window.__choXhrRespPatched) {
+      window.__choXhrRespPatched = true;
+      var _origXhrOpen3 = XMLHttpRequest.prototype.open;
+      XMLHttpRequest.prototype.open = function(method, url) {
+        this.__choXhrRespUrl = String(url || '');
+        return _origXhrOpen3.apply(this, arguments);
+      };
+      var _origXhrSend3 = XMLHttpRequest.prototype.send;
+      XMLHttpRequest.prototype.send = function() {
+        var self3 = this;
+        self3.addEventListener('load', function() {
+          try {
+            window._choScanAnyBody(self3.responseText || '', self3.__choXhrRespUrl || '');
+          } catch(e) {}
+        });
+        return _origXhrSend3.apply(this, arguments);
+      };
+      console.log('✅ CHO: Universal XHR response scanner active (Section 6)');
+    }
+
+    // ── 7. Wrap fetch: scan ALL responses ─────────────────────────────────────
+    if (!window.__choFetchRespPatched) {
+      window.__choFetchRespPatched = true;
+      var _baseFetch = window.fetch.bind(window);
+      window.fetch = function(input, init) {
         var reqUrl = (typeof input === 'string') ? input : ((input && input.url) || '');
-        var rl = String(reqUrl).toLowerCase();
-        // Catch: prescription, getpdf, generate-prescription, viewer (Google Docs viewer load)
-        var isPrescReq = rl.includes('prescription') || rl.includes('getpdf') ||
-                         rl.includes('generate-prescription') ||
-                         (rl.includes('viewerng') && rl.includes('getpdf'));
-        if (isPrescReq) {
-          console.log('📋 CHO: fetch prescription request → ' + reqUrl.substring(0, 200));
+        var result = _baseFetch(input, init);
+        try {
           result = result.then(function(resp) {
             try {
-              var respClone = resp.clone();
-              respClone.json().then(function(data) {
-                var pdfUrl = _choPdfFromData(data);
-                if (pdfUrl) {
-                  console.log('📋 CHO: fetch prescription resp pdfUrl=' + pdfUrl);
-                  if (window.CHOPrescriptionBridge) {
-                    window.CHOPrescriptionBridge.postMessage(JSON.stringify({pdfUrl: pdfUrl, appointmentId: ''}));
-                  }
-                } else {
-                  console.log('📋 CHO: fetch prescription resp (no PDF URL) keys=' + Object.keys(data).join(','));
-                }
-              }).catch(function(){
-                resp.clone().text().then(function(text) {
-                  var textPdfUrl = _choPdfFromText(text);
-                  if (textPdfUrl) {
-                    console.log('📋 CHO: fetch prescription text pdfUrl=' + textPdfUrl);
-                    if (window.CHOPrescriptionBridge) {
-                      window.CHOPrescriptionBridge.postMessage(JSON.stringify({pdfUrl: textPdfUrl, appointmentId: ''}));
-                    }
-                  } else {
-                    console.log('📋 CHO: fetch prescription resp (non-JSON/no PDF) url=' + reqUrl.substring(0,100));
-                  }
-                }).catch(function(){
-                  console.log('📋 CHO: fetch prescription resp (non-JSON unreadable) url=' + reqUrl.substring(0,100));
-                });
-              });
+              resp.clone().text().then(function(text) {
+                window._choScanAnyBody(text, reqUrl);
+              }).catch(function(){});
             } catch(e) {}
             return resp;
           });
-        }
-      } catch(e) {}
-      return result;
-    };
-  }
-
-  // ── 7. Intercept XHR responses for prescription API calls ────────────────
-  // generate-prescription XHR is visible in doctor's network tab →
-  // the CHO's telemed page may make a similar call or receive the URL.
-  if (!window.__choXhrRespPatched) {
-    window.__choXhrRespPatched = true;
-    var _origXhrOpen3 = XMLHttpRequest.prototype.open;
-    XMLHttpRequest.prototype.open = function(method, url) {
-      this.__choXhrRespUrl = String(url || '').toLowerCase();
-      this.__choXhrRespMethod = String(method || '').toUpperCase();
-      return _origXhrOpen3.apply(this, arguments);
-    };
-    var _origXhrSend3 = XMLHttpRequest.prototype.send;
-    XMLHttpRequest.prototype.send = function() {
-      var self3 = this;
-      var xUrl = self3.__choXhrRespUrl || '';
-      if (xUrl.includes('prescription') || xUrl.includes('getpdf') ||
-          xUrl.includes('generate-prescription')) {
-        console.log('📋 CHO: XHR prescription request [' + self3.__choXhrRespMethod + '] → ' + xUrl.substring(0,150));
-        self3.addEventListener('load', function() {
-          try {
-            console.log('📋 CHO: XHR prescription resp status=' + self3.status +
-                        ' body=' + (self3.responseText || '').substring(0,200));
-            if (self3.status === 200 || self3.status === 201) {
-              var data = {};
-              try { data = JSON.parse(self3.responseText); } catch(e) {}
-              var pdfUrl = _choPdfFromData(data);
-              if (pdfUrl) {
-                console.log('📋 CHO: XHR prescription resp pdfUrl=' + pdfUrl);
-                if (window.CHOPrescriptionBridge) {
-                  window.CHOPrescriptionBridge.postMessage(JSON.stringify({pdfUrl: pdfUrl, appointmentId: ''}));
-                }
-              } else {
-                var textPdfUrl = _choPdfFromText(self3.responseText || '');
-                if (textPdfUrl) {
-                  console.log('📋 CHO: XHR prescription text pdfUrl=' + textPdfUrl);
-                  if (window.CHOPrescriptionBridge) {
-                    window.CHOPrescriptionBridge.postMessage(JSON.stringify({pdfUrl: textPdfUrl, appointmentId: ''}));
-                  }
-                }
-              }
-            }
-          } catch(e) {}
-        });
-      }
-      return _origXhrSend3.apply(this, arguments);
-    };
+        } catch(e) {}
+        return result;
+      };
+      console.log('✅ CHO: Universal fetch response scanner active (Section 7)');
+    }
   }
 
   // ── 8. MutationObserver: catch <iframe src="...getpdf..."> injections ─────
@@ -1198,7 +1190,188 @@ class _VideoConsultationWebViewPageState
     } catch(e) { console.log('⚠️ CHO: MutObs patch failed: ' + e); }
   }
 
+  // ── 8b. /pres/ same-origin iframe injection ─────────────────────────────
+  // KEY: tele_back/ embeds /pres/ in a same-origin iframe.  The prescription
+  // URL is generated INSIDE /pres/ (index-BCiis0Um.js) and loaded via a
+  // Google Docs Viewer iframe: docs.google.com/viewer?url=getpdf/...
+  // Our window.* patches don't reach the iframe's window — we must inject
+  // into it separately.  Since /pres/ is same-origin, this is allowed.
+  if (!window.__choPresIframeWatcher) {
+    window.__choPresIframeWatcher = true;
+    var _choInjectedFrames = [];
+
+    function _choInjectIntoFrame(ifr) {
+      try {
+        if (!ifr || _choInjectedFrames.indexOf(ifr) >= 0) return;
+        var fw = ifr.contentWindow;
+        if (!fw || !fw.document) return;
+        _choInjectedFrames.push(ifr);
+
+        // Forward Flutter bridge into the iframe's window so its JS can call it.
+        if (window.CHOPrescriptionBridge && !fw.CHOPrescriptionBridge) {
+          fw.CHOPrescriptionBridge = window.CHOPrescriptionBridge;
+        }
+
+        // ── PRIORITY 1: Hook console.log inside /pres/ iframe ──────────────
+        // index-BCiis0Um.js logs exactly:
+        //   "PDF preview loaded using Google Docs Viewer: {url}"
+        // This is the most reliable signal — catch it directly.
+        if (!fw.__choPdfLogHooked) {
+          fw.__choPdfLogHooked = true;
+          var _origFwLog = fw.console.log.bind(fw.console);
+          fw.console.log = function() {
+            try {
+              var args = Array.prototype.slice.call(arguments);
+              var msg = args.join(' ');
+              if (msg.indexOf('PDF preview loaded using Google Docs Viewer') >= 0) {
+                // Extract the URL from the log message
+                var urlMatch = msg.match(/https?:\\/\\/[\\S]+\\.pdf/i);
+                if (!urlMatch) urlMatch = msg.match(/https?:\\/\\/[\\S]+getpdf[\\S]*/i);
+                var pdfUrl = urlMatch ? urlMatch[0].replace(/['"<>]+\$/, '') : '';
+                if (pdfUrl) {
+                  console.log('📋 CHO pres-iframe console.log → ' + pdfUrl);
+                  var bridge = fw.CHOPrescriptionBridge || window.CHOPrescriptionBridge;
+                  if (bridge) bridge.postMessage(JSON.stringify({pdfUrl: pdfUrl, appointmentId: ''}));
+                }
+              }
+              // Also catch uploadResponse / "PDF uploaded" lines for early detection
+              if (msg.indexOf('Upload Response') >= 0 || msg.indexOf('PDF uploaded') >= 0) {
+                console.log('📋 CHO pres-iframe: upload event → polling for PDF in 2s');
+                // Trigger a DOM scan 2 seconds later when PDF URL will be set
+                setTimeout(function() {
+                  try {
+                    fw.document.querySelectorAll('iframe[src]').forEach(function(fi) {
+                      _choCheckIframeSrc(fi.getAttribute('src') || '');
+                    });
+                    var html = fw.document.documentElement ? fw.document.documentElement.innerHTML : '';
+                    if (html && html.indexOf('docs.google.com/viewer') >= 0) {
+                      var pdfInHtml = _choPdfFromText(html);
+                      if (pdfInHtml) {
+                        var bridge2 = fw.CHOPrescriptionBridge || window.CHOPrescriptionBridge;
+                        if (bridge2) bridge2.postMessage(JSON.stringify({pdfUrl: pdfInHtml, appointmentId: ''}));
+                      }
+                    }
+                  } catch(e) {}
+                }, 2000);
+              }
+            } catch(e) {}
+            return _origFwLog.apply(fw.console, arguments);
+          };
+          console.log('✅ CHO: console.log hooked inside /pres/ iframe');
+        }
+
+        // Helper: check a src string for prescription PDF and send to bridge.
+        function _choCheckIframeSrc(src) {
+          if (!src) return;
+          var sl = src.toLowerCase();
+          // Case 1: Google Docs Viewer wrapping the prescription PDF URL
+          if (sl.indexOf('docs.google.com') >= 0 && (sl.indexOf('getpdf') >= 0 || sl.indexOf('prescription') >= 0)) {
+            try {
+              var p = new URL(src);
+              var inner = p.searchParams.get('url') || p.searchParams.get('src') || '';
+              var pdfUrl = (inner && (inner.toLowerCase().indexOf('getpdf') >= 0 || inner.endsWith('.pdf'))) ? inner : src;
+              console.log('📋 CHO pres-iframe: GDV iframe detected → ' + pdfUrl.substring(0, 150));
+              var bridge = fw.CHOPrescriptionBridge || window.CHOPrescriptionBridge;
+              if (bridge) bridge.postMessage(JSON.stringify({pdfUrl: pdfUrl, appointmentId: ''}));
+            } catch(e) {}
+            return;
+          }
+          // Case 2: Direct getpdf / .pdf iframe src
+          if (sl.indexOf('getpdf') >= 0 || (sl.indexOf('prescription') >= 0 && sl.endsWith('.pdf'))) {
+            console.log('📋 CHO pres-iframe: direct PDF iframe → ' + src.substring(0, 150));
+            var bridge2 = fw.CHOPrescriptionBridge || window.CHOPrescriptionBridge;
+            if (bridge2) bridge2.postMessage(JSON.stringify({pdfUrl: src, appointmentId: ''}));
+          }
+        }
+
+        // Observe /pres/ DOM for iframe elements being added (GDV loads as iframe).
+        try {
+          var presObs = new (fw.MutationObserver || window.MutationObserver)(function(muts) {
+            muts.forEach(function(m) {
+              m.addedNodes.forEach(function(n) {
+                if (!n || n.nodeType !== 1) return;
+                var t = (n.tagName || '').toUpperCase();
+                if (t === 'IFRAME' || t === 'FRAME' || t === 'EMBED' || t === 'OBJECT') {
+                  _choCheckIframeSrc(n.getAttribute('src') || n.getAttribute('data') || '');
+                }
+                if (n.querySelectorAll) {
+                  try {
+                    n.querySelectorAll('iframe,frame,embed,object').forEach(function(fi) {
+                      _choCheckIframeSrc(fi.getAttribute('src') || fi.getAttribute('data') || '');
+                    });
+                  } catch(e) {}
+                }
+              });
+              if (m.type === 'attributes') {
+                _choCheckIframeSrc(m.target.getAttribute('src') || m.target.getAttribute('data') || '');
+              }
+            });
+          });
+          var presRoot = fw.document.documentElement || fw.document.body;
+          if (presRoot) {
+            presObs.observe(presRoot, {childList: true, subtree: true, attributes: true, attributeFilter: ['src','data']});
+            console.log('✅ CHO: MutObs injected into same-origin iframe');
+          }
+        } catch(e) { console.log('⚠️ CHO presObs error: ' + e); }
+
+        // Scan DOM inside /pres/ RIGHT NOW in case prescription already rendered.
+        try {
+          fw.document.querySelectorAll('iframe[src],frame[src],embed[src]').forEach(function(fi) {
+            _choCheckIframeSrc(fi.getAttribute('src') || '');
+          });
+          // Also scan raw HTML for any getpdf URL that may be embedded in text.
+          var html = fw.document.documentElement ? fw.document.documentElement.innerHTML : '';
+          if (html && (html.indexOf('getpdf') >= 0 || html.indexOf('docs.google.com/viewer') >= 0)) {
+            var pdfFound = _choPdfFromText(html);
+            if (pdfFound) {
+              console.log('📋 CHO pres-iframe: PDF URL in DOM HTML → ' + pdfFound.substring(0,150));
+              var bridge3 = fw.CHOPrescriptionBridge || window.CHOPrescriptionBridge;
+              if (bridge3) bridge3.postMessage(JSON.stringify({pdfUrl: pdfFound, appointmentId: ''}));
+            }
+          }
+        } catch(e) {}
+      } catch(e) { console.log('⚠️ CHO _choInjectIntoFrame error: ' + e); }
+    }
+
+    // Run injection for a frame element, now and on its load event.
+    function _choWatchFrame(f) {
+      try {
+        var src = f.getAttribute('src') || '';
+        // Only inject into same-origin frames (blank src = same-origin, or dhanvantari.net.in).
+        if (src.indexOf('http') === 0 && src.indexOf('dhanvantari.net.in') < 0) return;
+        f.addEventListener('load', function() { _choInjectIntoFrame(f); });
+        _choInjectIntoFrame(f); // try immediately (if already loaded)
+      } catch(e) {}
+    }
+
+    // Watch tele_back/'s own DOM for new iframes being added (e.g., /pres/ lazy-loaded).
+    try {
+      var _choFrameObs = new MutationObserver(function(muts) {
+        muts.forEach(function(m) {
+          m.addedNodes.forEach(function(n) {
+            if (!n || n.nodeType !== 1) return;
+            var t = (n.tagName || '').toUpperCase();
+            if (t === 'IFRAME' || t === 'FRAME') _choWatchFrame(n);
+            if (n.querySelectorAll) {
+              try { n.querySelectorAll('iframe,frame').forEach(_choWatchFrame); } catch(e) {}
+            }
+          });
+        });
+      });
+      var _choFObsRoot = document.documentElement || document.body;
+      if (_choFObsRoot) _choFrameObs.observe(_choFObsRoot, {childList: true, subtree: true});
+    } catch(e) {}
+
+    // Inject into already-present same-origin iframes immediately.
+    try {
+      document.querySelectorAll('iframe,frame').forEach(_choWatchFrame);
+    } catch(e) {}
+
+    console.log('✅ CHO: /pres/ iframe watcher active (Section 8b)');
+  }
+
   // ── 9. Periodic DOM scan for late viewer/getpdf URLs ──────────────────────
+  // Also scans inside same-origin iframes so we catch /pres/ prescription URLs.
   if (!window.__choDomScanStarted) {
     window.__choDomScanStarted = true;
     var _choDomScanCount = 0;
@@ -1225,6 +1398,21 @@ class _VideoConsultationWebViewPageState
           }
         } catch(e) {}
 
+        // Also scan same-origin iframes (catches /pres/ prescription URLs).
+        try {
+          document.querySelectorAll('iframe,frame').forEach(function(f) {
+            try {
+              var fw = f.contentWindow;
+              if (!fw || !fw.document) return;
+              var fhtml = fw.document.documentElement ? fw.document.documentElement.innerHTML : '';
+              if (fhtml) candidates.push(fhtml.substring(0, 100000));
+              fw.document.querySelectorAll('iframe[src],embed[src]').forEach(function(fi) {
+                candidates.push(fi.getAttribute('src') || '');
+              });
+            } catch(e) {} // cross-origin will throw — ignore
+          });
+        } catch(e) {}
+
         for (var ci = 0; ci < candidates.length; ci++) {
           var found = _choPdfFromText(String(candidates[ci] || ''));
           if (found && found !== _choLastDomPdf) {
@@ -1242,6 +1430,75 @@ class _VideoConsultationWebViewPageState
         clearInterval(_choDomScan);
       }
     }, 1000);
+  }
+
+  // ── 10. Firestore long-poll response scanner ─────────────────────────────
+  // The web app uses Firestore (healthstack-6bc78) for real-time updates.
+  // When the doctor saves a prescription, the Firestore update may contain
+  // the PDF URL or a prescription_status field.  We scan Firestore
+  // channel responses (XHR to firestore.googleapis.com/.../Listen/channel)
+  // for prescription data and trigger the bridge.
+  if (!window.__choFirestoreScanner) {
+    window.__choFirestoreScanner = true;
+    var _origXhrOpenFS = XMLHttpRequest.prototype.open;
+    XMLHttpRequest.prototype.open = function(method, url) {
+      this.__choFsUrl = String(url || '');
+      return _origXhrOpenFS.apply(this, arguments);
+    };
+    var _origXhrSendFS = XMLHttpRequest.prototype.send;
+    XMLHttpRequest.prototype.send = function() {
+      var self4 = this;
+      if (self4.__choFsUrl && self4.__choFsUrl.indexOf('firestore.googleapis.com') >= 0) {
+        self4.addEventListener('load', function() {
+          try {
+            var resp = self4.responseText || '';
+            if (resp.length < 10) return;
+            // Firestore responses contain JSON arrays with document changes.
+            // Look for prescription-related field changes.
+            var hasPrescData = resp.indexOf('prescription') >= 0 ||
+                               resp.indexOf('getpdf') >= 0 ||
+                               resp.indexOf('.pdf') >= 0 ||
+                               resp.indexOf('pdf_url') >= 0 ||
+                               resp.indexOf('pdfUrl') >= 0 ||
+                               resp.indexOf('prescription_status') >= 0;
+            if (!hasPrescData) return;
+            console.log('🔥 CHO Firestore: prescription-related data detected');
+            // Extract PDF URL from Firestore response
+            var pdfMatch = resp.match(/https?:\\/\\/[^\\s"'\\\\]+(?:getpdf|prescription)[^\\s"'\\\\]*\\.pdf/i);
+            if (pdfMatch) {
+              var pdfUrl = pdfMatch[0];
+              console.log('📋 CHO Firestore: PDF URL found → ' + pdfUrl);
+              if (window.CHOPrescriptionBridge) {
+                window.CHOPrescriptionBridge.postMessage(JSON.stringify({pdfUrl: pdfUrl, appointmentId: ''}));
+              }
+              return;
+            }
+            // Also check for relative paths
+            var relMatch = resp.match(/\\/prescription_api\\/getpdf\\/[^\\s"'\\\\]+\\.pdf/i);
+            if (relMatch) {
+              var relUrl = 'https://dhanvantari.net.in' + relMatch[0];
+              console.log('📋 CHO Firestore: relative PDF URL found → ' + relUrl);
+              if (window.CHOPrescriptionBridge) {
+                window.CHOPrescriptionBridge.postMessage(JSON.stringify({pdfUrl: relUrl, appointmentId: ''}));
+              }
+              return;
+            }
+            // If we see prescription_status changed but no URL, trigger a REST poll
+            if (resp.indexOf('prescription_status') >= 0 ||
+                (resp.indexOf('prescription') >= 0 && resp.indexOf('completed') >= 0)) {
+              console.log('📋 CHO Firestore: prescription status change detected → notifying bridge for REST poll');
+              if (window.CHOPrescriptionBridge) {
+                window.CHOPrescriptionBridge.postMessage(JSON.stringify({pdfUrl: '', appointmentId: '', firestoreTrigger: true}));
+              }
+            }
+          } catch(e) {
+            console.log('⚠️ CHO Firestore scanner error: ' + e);
+          }
+        });
+      }
+      return _origXhrSendFS.apply(this, arguments);
+    };
+    console.log('✅ CHO: Firestore response scanner active (Section 10)');
   }
 
   console.log('✅ CHO auth [' + phase + ']: token=' + (token ? token.length + 'ch' : 'EMPTY') + ' csrf=' + (getCsrf() ? 'found' : 'NOT FOUND'));
@@ -1378,6 +1635,14 @@ class _VideoConsultationWebViewPageState
       final pdfUrl = (json['pdfUrl'] ?? '').toString().trim();
       final fileName = (json['fileName'] ?? 'prescription.pdf').toString().trim();
       final apptId = (json['appointmentId'] ?? widget.appointmentId.toString()).toString().trim();
+      final firestoreTrigger = json['firestoreTrigger'] == true || json['firestoreTrigger'] == 'true';
+
+      // Case 0: Firestore status-change trigger (no PDF URL, just a hint to poll REST)
+      if (firestoreTrigger && pdfUrl.isEmpty) {
+        debugPrint('📋 PrescriptionBridge: Firestore trigger → immediate REST poll');
+        _fetchAndShowPrescription(apptId.isNotEmpty ? apptId : widget.appointmentId.toString());
+        return;
+      }
 
       // Case 1: direct HTTPS URL
       if (pdfUrl.isNotEmpty && pdfUrl.startsWith('http')) {
@@ -1410,136 +1675,85 @@ class _VideoConsultationWebViewPageState
   /// The server URL format is: /prescription_api/getpdf/{ABHA_ID}/{TIMESTAMP}.pdf
   /// We don't know the timestamp, so we use the JSON list endpoint instead
   /// which returns the full PDF URL.
-  Future<void> _fetchAndShowPrescription(String prescriptionId) async {
+  /// Fetch prescription using the CORRECT API endpoint.
+  /// This is the SAME endpoint the /telemed/ web app uses internally:
+  ///   GET /appointment/api/appointments/{appointmentId}
+  /// Response contains: { pres_link: "https://...getpdf/...", ... }
+  Future<void> _fetchAndShowPrescription(String appointmentId) async {
     if (_prescriptionFound) return;
     final prefs = await SharedPreferences.getInstance();
     final token = prefs.getString('auth_token') ?? '';
     final cookies = prefs.getString('cookies') ?? '';
-    if (token.isEmpty) {
-      debugPrint('⚠️ PrescriptionBridge: no auth token — cannot fetch prescription');
-      return;
-    }
 
     // Helper: make an authenticated GET and return the body or null.
-    Future<String?> authGet(String path) async {
+    Future<String?> authGet(String url) async {
       try {
-        final uri = Uri.parse(path.startsWith('http')
-            ? path
-            : 'https://dhanvantari.net.in$path');
-        debugPrint('📋 PrescriptionBridge: GET $uri');
+        final uri = Uri.parse(url);
+        debugPrint('📋 PrescriptionPoll: GET $uri');
         final client = HttpClient();
         client.badCertificateCallback = (_, __, ___) => true;
         final request = await client.getUrl(uri);
-        request.headers.set('Authorization', 'Bearer $token');
+        if (token.isNotEmpty) request.headers.set('Authorization', 'Bearer $token');
         request.headers.set('Accept', 'application/json');
         if (cookies.isNotEmpty) request.headers.set('Cookie', cookies);
         final response = await request.close().timeout(const Duration(seconds: 10));
         if (response.statusCode == 200 || response.statusCode == 201) {
           return await response.transform(const Utf8Decoder()).join();
         }
-        debugPrint('📋 PrescriptionBridge: GET $uri → ${response.statusCode}');
+        debugPrint('📋 PrescriptionPoll: GET $uri → ${response.statusCode}');
         response.drain<void>();
         return null;
       } catch (e) {
-        debugPrint('📋 PrescriptionBridge: GET error: $e');
+        debugPrint('📋 PrescriptionPoll: error: $e');
         return null;
       }
     }
 
-    // ── 1. JSON API endpoints — these return the actual PDF URL ─────────────
-    //    Try the appointment-specific prescription endpoint first.
-    //    The server may return: { pdf_url: "https://...getpdf/...", ... }
-    //    or include it somewhere in the JSON tree.
-    final endpoints = [
-      '/prescription_api/api/prescriptions/?appointment=$prescriptionId',
-      '/prescription_api/api/prescriptions/?appointment_id=$prescriptionId',
-      '/appointment/api/appointments/$prescriptionId/prescription/',
-      '/appointment/api/appointments/$prescriptionId/prescription',
-      '/prescription_api/api/prescriptions/$prescriptionId/',
-    ];
-    for (final path in endpoints) {
-      if (_prescriptionFound) return;
-      final body = await authGet(path);
-      if (body == null || body.isEmpty) continue;
-      debugPrint('📋 PrescriptionBridge [$path]: body=${body.substring(0, body.length.clamp(0, 300))}');
-      // Try parsing as JSON
-      final data = _parseJson(body);
-      if (data.isNotEmpty) {
-        final url = _extractPdfUrl(data);
-        if (url != null) {
-          debugPrint('📋 PrescriptionBridge: PDF URL found via JSON → $url');
-          _prescriptionFound = true;
-          if (mounted) _openPdfOverlay(url);
-          return;
-        }
-        // Also check if it's a list: [{pdf_url:...}, ...]
-        try {
-          final decoded = jsonDecode(body);
-          if (decoded is List && decoded.isNotEmpty) {
-            for (final item in decoded as List<dynamic>) {
-              if (item is Map<String, dynamic>) {
-                final u = _extractPdfUrl(item);
-                if (u != null) {
-                  debugPrint('📋 PrescriptionBridge: PDF URL found in list → $u');
-                  _prescriptionFound = true;
-                  if (mounted) _openPdfOverlay(u);
-                  return;
-                }
-              }
+    // ── PRIMARY: Same endpoint the /telemed/ web app uses ───────────────────
+    // The React app's _n() function calls:
+    //   axios.get(`${BASE}/appointment/api/appointments/${appointmentId}`)
+    // and reads response.data.pres_link
+    final primaryUrl =
+        'https://dhanvantari.net.in/appointment/api/appointments/$appointmentId';
+    final body = await authGet(primaryUrl);
+    if (body != null && body.isNotEmpty) {
+      try {
+        final data = jsonDecode(body);
+        if (data is Map<String, dynamic>) {
+          // The web app reads: response.data.pres_link
+          final presLink = (data['pres_link'] ?? data['presLink'] ??
+              data['pdf_url'] ?? data['pdfUrl'] ?? data['prescription_url'] ??
+              data['prescriptionUrl'] ?? '')
+              .toString()
+              .trim();
+          if (presLink.isNotEmpty) {
+            debugPrint('📋 PrescriptionPoll: ✅ pres_link found → $presLink');
+            _prescriptionFound = true;
+            if (mounted) _openPdfOverlay(presLink);
+            return;
+          }
+          debugPrint('📋 PrescriptionPoll: appointment found but pres_link is empty (doctor hasn\'t saved yet)');
+          // Also check nested structures
+          final nested = data['prescription'] ?? data['data'];
+          if (nested is Map<String, dynamic>) {
+            final nestedLink = (nested['pres_link'] ?? nested['pdf_url'] ??
+                nested['presLink'] ?? nested['pdfUrl'] ?? '')
+                .toString()
+                .trim();
+            if (nestedLink.isNotEmpty) {
+              debugPrint('📋 PrescriptionPoll: ✅ nested pres_link → $nestedLink');
+              _prescriptionFound = true;
+              if (mounted) _openPdfOverlay(nestedLink);
+              return;
             }
           }
-        } catch (_) {}
-      }
-      // Try as raw text/HTML scan for URLs
-      final textUrl = _extractPdfUrlFromText(body);
-      if (textUrl != null) {
-        debugPrint('📋 PrescriptionBridge: PDF URL found in raw response → $textUrl');
-        _prescriptionFound = true;
-        if (mounted) _openPdfOverlay(textUrl);
-        return;
-      }
-    }
-
-    // ── 2. Try ABHA-ID based getpdf listing (only if abhaId is known) ─────
-    //    The server stores: /prescription_api/getpdf/{ABHA_ID}/{TIMESTAMP}.pdf
-    //    We can try a list/index endpoint if one is available.
-    final abhaId = widget.patientAbhaId ?? '';
-    if (abhaId.isNotEmpty) {
-      final listUrl = '/prescription_api/api/prescriptions/?patient_abha=$abhaId';
-      final body = await authGet(listUrl);
-      if (body != null && body.isNotEmpty) {
-        final textUrl = _extractPdfUrlFromText(body);
-        if (textUrl != null) {
-          debugPrint('📋 PrescriptionBridge: ABHA-based PDF URL → $textUrl');
-          _prescriptionFound = true;
-          if (mounted) _openPdfOverlay(textUrl);
-          return;
-        }
-      }
-      // Also try a direct HEAD request on the ABHA-based getpdf base path
-      // — the server may serve a redirect or listing there.
-      final directBase =
-          'https://dhanvantari.net.in/prescription_api/getpdf/$abhaId/';
-      try {
-        final c0 = HttpClient();
-        c0.badCertificateCallback = (_, __, ___) => true;
-        final r0 = await c0.headUrl(Uri.parse(directBase));
-        r0.headers.set('Authorization', 'Bearer $token');
-        if (cookies.isNotEmpty) r0.headers.set('Cookie', cookies);
-        final resp0 = await r0.close().timeout(const Duration(seconds: 6));
-        resp0.drain<void>();
-        debugPrint('📋 PrescriptionBridge: ABHA HEAD $directBase → ${resp0.statusCode}');
-        if (resp0.statusCode == 200) {
-          _prescriptionFound = true;
-          if (mounted) _openPdfOverlay(directBase);
-          return;
         }
       } catch (e) {
-        debugPrint('📋 PrescriptionBridge: ABHA HEAD failed: $e');
+        debugPrint('📋 PrescriptionPoll: JSON parse error: $e');
       }
     }
 
-    debugPrint('📋 PrescriptionBridge: no PDF found for appointmentId=$prescriptionId abhaId=$abhaId');
+    debugPrint('📋 PrescriptionPoll: no pres_link yet for appointmentId=$appointmentId');
   }
 
   /// Safe JSON → Map helper.
