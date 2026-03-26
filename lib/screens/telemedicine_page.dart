@@ -548,121 +548,104 @@ class _DoctorDetailPageState extends State<_DoctorDetailPage> {
   Widget build(BuildContext context) {
     final doc = _detail ?? widget.doctor;
 
+    final statusColor = doc.isOnline
+        ? const Color(0xFF16A34A)
+        : doc.isBusy
+            ? const Color(0xFFEA580C)
+            : const Color(0xFF9CA3AF);
+
     return Scaffold(
-      backgroundColor: const Color(0xFFF5F7FA),
+      backgroundColor: const Color(0xFFF1F5F9),
       body: _isLoading
           ? const Center(
               child: CircularProgressIndicator(color: AppColors.primary))
           : CustomScrollView(
               slivers: [
+                // ── HEADER ──────────────────────────────────────
                 SliverAppBar(
                   pinned: true,
-                  expandedHeight: 210,
-                  backgroundColor: AppColors.primary,
+                  expandedHeight: 260,
+                  backgroundColor: const Color(0xFF1E3A5F),
                   foregroundColor: Colors.white,
                   flexibleSpace: FlexibleSpaceBar(
                     background: Container(
-                      decoration: BoxDecoration(
+                      decoration: const BoxDecoration(
                         gradient: LinearGradient(
                           colors: [
-                            AppColors.primary,
-                            const Color(0xFF1E56AF),
-                            const Color(0xFF173D84),
+                            Color(0xFF1E3A5F),
+                            Color(0xFF2563EB),
                           ],
-                          begin: Alignment.topLeft,
-                          end: Alignment.bottomRight,
+                          begin: Alignment.bottomLeft,
+                          end: Alignment.topRight,
                         ),
-                        boxShadow: [
-                          BoxShadow(
-                            color:
-                                const Color(0xFF12326A).withValues(alpha: 0.18),
-                            blurRadius: 24,
-                            offset: const Offset(0, 10),
-                          ),
-                        ],
                       ),
                       child: SafeArea(
                         child: Padding(
-                          padding: const EdgeInsets.fromLTRB(18, 16, 18, 18),
+                          padding: const EdgeInsets.fromLTRB(20, 12, 20, 20),
                           child: Column(
                             mainAxisAlignment: MainAxisAlignment.end,
                             children: [
+                              // Avatar
+                              Container(
+                                width: 76,
+                                height: 76,
+                                decoration: BoxDecoration(
+                                  shape: BoxShape.circle,
+                                  color: Colors.white.withValues(alpha: 0.15),
+                                  border: Border.all(
+                                    color: Colors.white.withValues(alpha: 0.3),
+                                    width: 2.5,
+                                  ),
+                                ),
+                                child: Center(
+                                  child: Text(
+                                    doc.initials,
+                                    style: GoogleFonts.poppins(
+                                      fontSize: 28,
+                                      fontWeight: FontWeight.w700,
+                                      color: Colors.white,
+                                    ),
+                                  ),
+                                ),
+                              ),
+                              const SizedBox(height: 12),
+                              // Name
+                              Text(
+                                doc.name,
+                                textAlign: TextAlign.center,
+                                style: GoogleFonts.poppins(
+                                  fontSize: 20,
+                                  fontWeight: FontWeight.w700,
+                                  color: Colors.white,
+                                ),
+                              ),
+                              if (doc.specialization != null) ...[
+                                const SizedBox(height: 2),
+                                Text(
+                                  doc.specialization!,
+                                  style: GoogleFonts.inter(
+                                    fontSize: 13,
+                                    color: Colors.white.withValues(alpha: 0.75),
+                                  ),
+                                ),
+                              ],
+                              const SizedBox(height: 12),
+                              // Chips
                               Row(
-                                crossAxisAlignment: CrossAxisAlignment.end,
+                                mainAxisAlignment: MainAxisAlignment.center,
                                 children: [
-                                  Container(
-                                    width: 62,
-                                    height: 62,
-                                    decoration: BoxDecoration(
-                                      color:
-                                          Colors.white.withValues(alpha: 0.12),
-                                      borderRadius: BorderRadius.circular(18),
-                                      border: Border.all(
-                                        color: Colors.white
-                                            .withValues(alpha: 0.14),
-                                      ),
-                                      boxShadow: [
-                                        BoxShadow(
-                                          color: Colors.black
-                                              .withValues(alpha: 0.12),
-                                          blurRadius: 16,
-                                          offset: const Offset(0, 8),
-                                        ),
-                                      ],
-                                    ),
-                                    child: Center(
-                                      child: Text(
-                                        doc.initials,
-                                        style: GoogleFonts.poppins(
-                                            fontSize: 22,
-                                            fontWeight: FontWeight.w700,
-                                            color: Colors.white),
-                                      ),
-                                    ),
+                                  _headerChip(
+                                    doc.isOnline
+                                        ? 'Online'
+                                        : doc.isBusy
+                                            ? 'Busy'
+                                            : 'Offline',
+                                    _dotColorStatic(doc.status),
                                   ),
-                                  const SizedBox(width: 12),
-                                  Expanded(
-                                    child: Column(
-                                      crossAxisAlignment:
-                                          CrossAxisAlignment.start,
-                                      children: [
-                                        Text(
-                                          doc.name,
-                                          style: GoogleFonts.poppins(
-                                              fontSize: 18,
-                                              fontWeight: FontWeight.w700,
-                                              color: Colors.white),
-                                        ),
-                                        if (doc.specialization != null) ...[
-                                          const SizedBox(height: 2),
-                                          Text(
-                                            doc.specialization!,
-                                            style: GoogleFonts.dmSans(
-                                                fontSize: 12,
-                                                fontWeight: FontWeight.w500,
-                                                color: Colors.white
-                                                    .withValues(alpha: 0.82)),
-                                          ),
-                                        ],
-                                        const SizedBox(height: 8),
-                                        Wrap(
-                                          spacing: 6,
-                                          runSpacing: 6,
-                                          children: [
-                                            _headerChip(
-                                                doc.isOnline
-                                                    ? 'Online'
-                                                    : doc.isBusy
-                                                        ? 'Busy'
-                                                        : 'Offline',
-                                                _dotColorStatic(doc.status)),
-                                            if (doc.city != null)
-                                              _headerChip(doc.city!, null),
-                                          ],
-                                        ),
-                                      ],
-                                    ),
-                                  ),
+                                  if (doc.city != null) ...[
+                                    const SizedBox(width: 8),
+                                    _headerChip(doc.city!, null),
+                                  ],
                                 ],
                               ),
                             ],
@@ -672,258 +655,213 @@ class _DoctorDetailPageState extends State<_DoctorDetailPage> {
                     ),
                   ),
                 ),
+
+                // ── BODY ────────────────────────────────────────
                 SliverToBoxAdapter(
                   child: Padding(
-                    padding: const EdgeInsets.fromLTRB(14, 12, 14, 22),
+                    padding: const EdgeInsets.fromLTRB(16, 16, 16, 28),
                     child: Column(
                       children: [
+                        // ── Doctor Info (compact grid) ──
                         _card(
-                          icon: Icons.badge_outlined,
+                          icon: Icons.person_outline_rounded,
                           title: 'Doctor Information',
-                          child: LayoutBuilder(
-                            builder: (context, constraints) {
-                              final width = constraints.maxWidth;
-                              final itemWidth =
-                                  width > 620 ? (width - 10) / 2 : width;
-                              return Wrap(
-                                spacing: 8,
-                                runSpacing: 8,
-                                children: [
-                                  if (doc.phone != null)
-                                    SizedBox(
-                                      width: itemWidth,
-                                      child: _infoTile(
-                                        icon: Icons.phone_outlined,
-                                        label: 'Phone',
-                                        value: doc.phone!,
-                                      ),
-                                    ),
-                                  if (doc.email != null)
-                                    SizedBox(
-                                      width: itemWidth,
-                                      child: _infoTile(
-                                        icon: Icons.email_outlined,
-                                        label: 'Email',
-                                        value: doc.email!,
-                                      ),
-                                    ),
-                                  if (doc.gender != null)
-                                    SizedBox(
-                                      width: itemWidth,
-                                      child: _infoTile(
-                                        icon: Icons.wc_outlined,
-                                        label: 'Gender',
-                                        value: doc.gender!
-                                                .substring(0, 1)
-                                                .toUpperCase() +
-                                            doc.gender!.substring(1),
-                                      ),
-                                    ),
-                                  if (doc.city != null)
-                                    SizedBox(
-                                      width: itemWidth,
-                                      child: _infoTile(
-                                        icon: Icons.location_on_outlined,
-                                        label: 'City',
-                                        value: doc.city!,
-                                      ),
-                                    ),
-                                  if (doc.hprId != null)
-                                    SizedBox(
-                                      width: itemWidth,
-                                      child: _infoTile(
-                                        icon: Icons.badge_outlined,
-                                        label: 'HPR ID',
-                                        value: doc.hprId!,
-                                      ),
-                                    ),
-                                  if (doc.qualification != null)
-                                    SizedBox(
-                                      width: itemWidth,
-                                      child: _infoTile(
-                                        icon: Icons.school_outlined,
-                                        label: 'Qualification',
-                                        value: doc.qualification!,
-                                      ),
-                                    ),
-                                ],
-                              );
-                            },
-                          ),
+                          child: _buildInfoGrid(doc),
                         ),
-                        const SizedBox(height: 10),
+                        const SizedBox(height: 12),
+
+                        // ── Telemedicine Service ──
                         _card(
                           icon: Icons.videocam_outlined,
                           title: 'Telemedicine Service',
                           child: Container(
                             width: double.infinity,
-                            padding: const EdgeInsets.all(12),
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 14, vertical: 12),
                             decoration: BoxDecoration(
-                              color: const Color(0xFFF4FBF7),
-                              borderRadius: BorderRadius.circular(14),
-                              border:
-                                  Border.all(color: const Color(0xFFD7EFD9)),
+                              color: const Color(0xFFF0FDF4),
+                              borderRadius: BorderRadius.circular(12),
+                              border: Border.all(
+                                  color: const Color(0xFFBBF7D0)),
                             ),
                             child: Row(
                               children: [
                                 Container(
-                                  width: 34,
-                                  height: 34,
+                                  width: 36,
+                                  height: 36,
                                   decoration: BoxDecoration(
-                                    color: const Color(0xFFE5F6EA),
+                                    color: const Color(0xFFDCFCE7),
                                     borderRadius: BorderRadius.circular(10),
                                   ),
-                                  child: const Icon(
-                                    Icons.videocam_rounded,
-                                    size: 16,
-                                    color: Color(0xFF2E7D32),
-                                  ),
+                                  child: const Icon(Icons.videocam_rounded,
+                                      size: 18, color: Color(0xFF16A34A)),
                                 ),
-                                const SizedBox(width: 10),
+                                const SizedBox(width: 12),
                                 Expanded(
-                                  child: Text(
-                                    'Video consultation available for this doctor.',
-                                    style: GoogleFonts.inter(
-                                      fontSize: 11.5,
-                                      height: 1.35,
-                                      color: AppColors.textSecondary,
-                                    ),
+                                  child: Column(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    children: [
+                                      Text(
+                                        'Video Consultation',
+                                        style: GoogleFonts.inter(
+                                          fontSize: 13,
+                                          fontWeight: FontWeight.w600,
+                                          color: const Color(0xFF15803D),
+                                        ),
+                                      ),
+                                      const SizedBox(height: 2),
+                                      Text(
+                                        'Virtual appointment with your doctor via secure video call.',
+                                        style: GoogleFonts.inter(
+                                          fontSize: 11,
+                                          height: 1.4,
+                                          color: const Color(0xFF6B7280),
+                                        ),
+                                      ),
+                                    ],
                                   ),
                                 ),
                               ],
                             ),
                           ),
                         ),
-                        const SizedBox(height: 10),
+                        const SizedBox(height: 12),
+
+                        // ── Consultation Status + CTA ──
                         _card(
                           icon: Icons.medical_services_outlined,
-                          title: 'Consultation Status',
+                          title: 'Consultation',
                           child: Column(
                             children: [
+                              // Status banner
                               Container(
                                 width: double.infinity,
-                                padding: const EdgeInsets.all(12),
+                                padding: const EdgeInsets.all(14),
                                 decoration: BoxDecoration(
                                   color: doc.isOnline
-                                      ? const Color(0xFFF0FFF4)
+                                      ? const Color(0xFFF0FDF4)
                                       : doc.isBusy
-                                          ? const Color(0xFFFFF8E1)
-                                          : const Color(0xFFF5F5F5),
-                                  borderRadius: BorderRadius.circular(14),
+                                          ? const Color(0xFFFFF7ED)
+                                          : const Color(0xFFF9FAFB),
+                                  borderRadius: BorderRadius.circular(12),
                                   border: Border.all(
                                     color: doc.isOnline
-                                        ? const Color(0xFFCFE8D2)
+                                        ? const Color(0xFFBBF7D0)
                                         : doc.isBusy
-                                            ? const Color(0xFFFFE0B2)
-                                            : const Color(0xFFE2E5E9),
+                                            ? const Color(0xFFFED7AA)
+                                            : const Color(0xFFE5E7EB),
                                   ),
                                 ),
                                 child: Row(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
                                   children: [
                                     Container(
                                       width: 10,
                                       height: 10,
-                                      margin: const EdgeInsets.only(top: 3),
                                       decoration: BoxDecoration(
                                         shape: BoxShape.circle,
-                                        color: _dotColorStatic(doc.status),
+                                        color: statusColor,
                                       ),
                                     ),
-                                    const SizedBox(width: 8),
+                                    const SizedBox(width: 10),
                                     Expanded(
                                       child: Text(
                                         doc.isOnline
-                                            ? 'Doctor is available for consultation right now.'
+                                            ? 'Doctor is available for consultation'
                                             : doc.isBusy
-                                                ? 'Doctor is currently attending another consultation.'
-                                                : 'Doctor is currently offline for consultation.',
-                                        style: GoogleFonts.dmSans(
-                                          fontSize: 12.5,
-                                          fontWeight: FontWeight.w700,
-                                          color: doc.isOnline
-                                              ? const Color(0xFF2E7D32)
-                                              : doc.isBusy
-                                                  ? const Color(0xFFE65100)
-                                                  : const Color(0xFF757575),
+                                                ? 'Doctor is currently busy'
+                                                : 'Doctor is currently offline',
+                                        style: GoogleFonts.inter(
+                                          fontSize: 13,
+                                          fontWeight: FontWeight.w600,
+                                          color: statusColor,
                                         ),
                                       ),
                                     ),
                                   ],
                                 ),
                               ),
+
                               if (doc.isOnline) ...[
-                                const SizedBox(height: 12),
                                 if (_resolvedPatientId <= 0) ...[
+                                  const SizedBox(height: 10),
                                   Container(
                                     width: double.infinity,
                                     padding: const EdgeInsets.all(10),
-                                    margin: const EdgeInsets.only(bottom: 10),
                                     decoration: BoxDecoration(
-                                      color: const Color(0xFFFFF8E1),
-                                      borderRadius: BorderRadius.circular(12),
+                                      color: const Color(0xFFFEF3C7),
+                                      borderRadius: BorderRadius.circular(10),
                                       border: Border.all(
-                                          color: const Color(0xFFFFE082)),
+                                          color: const Color(0xFFFDE68A)),
                                     ),
                                     child: Row(
                                       children: [
-                                        const Icon(Icons.info_outline,
-                                            size: 15, color: Color(0xFFF57F17)),
+                                        const Icon(Icons.warning_amber_rounded,
+                                            size: 16,
+                                            color: Color(0xFFD97706)),
                                         const SizedBox(width: 8),
                                         Expanded(
                                           child: Text(
                                             'Patient ID is missing for this consultation. Open telemedicine from a verified patient appointment.',
                                             style: GoogleFonts.inter(
-                                                fontSize: 10.5,
-                                                height: 1.3,
-                                                color: const Color(0xFFF57F17)),
+                                              fontSize: 11,
+                                              height: 1.3,
+                                              color: const Color(0xFF92400E),
+                                            ),
                                           ),
                                         ),
                                       ],
                                     ),
                                   ),
                                 ],
+                                const SizedBox(height: 14),
                                 SizedBox(
                                   width: double.infinity,
-                                  height: 46,
+                                  height: 50,
                                   child: ElevatedButton.icon(
                                     onPressed: _resolvedPatientId > 0
                                         ? () => _startConsultation(doc)
                                         : null,
                                     icon: const Icon(Icons.videocam_rounded,
-                                        size: 18),
+                                        size: 20),
                                     label: Text(
                                       'Start Video Consultation',
-                                      style: GoogleFonts.dmSans(
-                                          fontSize: 13,
-                                          fontWeight: FontWeight.w600),
+                                      style: GoogleFonts.inter(
+                                        fontSize: 14,
+                                        fontWeight: FontWeight.w600,
+                                      ),
                                     ),
                                     style: ElevatedButton.styleFrom(
-                                      backgroundColor: const Color(0xFF3FB24F),
+                                      backgroundColor: const Color(0xFF16A34A),
                                       foregroundColor: Colors.white,
+                                      disabledBackgroundColor:
+                                          const Color(0xFFD1D5DB),
                                       elevation: 0,
                                       shape: RoundedRectangleBorder(
-                                          borderRadius:
-                                              BorderRadius.circular(12)),
+                                        borderRadius:
+                                            BorderRadius.circular(14),
+                                      ),
                                     ),
                                   ),
                                 ),
                               ],
+
                               if (!doc.isOnline) ...[
                                 const SizedBox(height: 10),
                                 Container(
                                   width: double.infinity,
                                   padding: const EdgeInsets.all(10),
                                   decoration: BoxDecoration(
-                                    color: const Color(0xFFFFF8E1),
-                                    borderRadius: BorderRadius.circular(12),
+                                    color: const Color(0xFFFEF3C7),
+                                    borderRadius: BorderRadius.circular(10),
                                     border: Border.all(
-                                        color: const Color(0xFFFFE082)),
+                                        color: const Color(0xFFFDE68A)),
                                   ),
                                   child: Row(
                                     children: [
-                                      const Icon(Icons.info_outline,
-                                          size: 15, color: Color(0xFFF57F17)),
+                                      const Icon(Icons.info_outline_rounded,
+                                          size: 15,
+                                          color: Color(0xFFD97706)),
                                       const SizedBox(width: 8),
                                       Expanded(
                                         child: Text(
@@ -931,9 +869,10 @@ class _DoctorDetailPageState extends State<_DoctorDetailPage> {
                                               ? 'Doctor is busy. Please try again shortly.'
                                               : 'Video consultation available when doctor is online.',
                                           style: GoogleFonts.inter(
-                                              fontSize: 10.5,
-                                              height: 1.3,
-                                              color: const Color(0xFFF57F17)),
+                                            fontSize: 11,
+                                            height: 1.3,
+                                            color: const Color(0xFF92400E),
+                                          ),
                                         ),
                                       ),
                                     ],
@@ -951,6 +890,47 @@ class _DoctorDetailPageState extends State<_DoctorDetailPage> {
               ],
             ),
     );
+  }
+
+  // ── Compact 2-column info grid ─────────────────────────
+  Widget _buildInfoGrid(Doctor doc) {
+    final items = <(IconData, String, String)>[
+      if (doc.phone != null)
+        (Icons.phone_outlined, 'Phone', doc.phone!),
+      if (doc.hprId != null)
+        (Icons.badge_outlined, 'HPR ID', doc.hprId!),
+      if (doc.gender != null)
+        (Icons.person_outline_rounded, 'Gender',
+            doc.gender!.substring(0, 1).toUpperCase() + doc.gender!.substring(1)),
+      if (doc.city != null)
+        (Icons.location_on_outlined, 'City', doc.city!),
+      if (doc.email != null)
+        (Icons.email_outlined, 'Email', doc.email!),
+      if (doc.qualification != null)
+        (Icons.school_outlined, 'Qualification', doc.qualification!),
+    ];
+
+    final rows = <Widget>[];
+    for (int i = 0; i < items.length; i += 2) {
+      rows.add(
+        Padding(
+          padding: EdgeInsets.only(top: i > 0 ? 8 : 0),
+          child: Row(
+            children: [
+              Expanded(child: _infoTile(
+                icon: items[i].$1, label: items[i].$2, value: items[i].$3)),
+              const SizedBox(width: 8),
+              if (i + 1 < items.length)
+                Expanded(child: _infoTile(
+                  icon: items[i + 1].$1, label: items[i + 1].$2, value: items[i + 1].$3))
+              else
+                const Expanded(child: SizedBox()),
+            ],
+          ),
+        ),
+      );
+    }
+    return Column(children: rows);
   }
 
   // ── Reusable card wrapper ───────────────────────────────
