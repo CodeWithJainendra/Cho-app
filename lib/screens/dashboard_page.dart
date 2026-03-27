@@ -6,10 +6,18 @@ import '../models/appointment_model.dart';
 import '../services/api_service.dart';
 import '../services/session_expiry_service.dart';
 import '../utils/constants.dart';
+import 'average_call_duration_page.dart';
 import 'appointment_detail_page.dart';
 import 'login_page.dart';
 import 'new_patient_page.dart';
 import 'telemedicine_page.dart';
+
+enum _DashboardMetricFilter {
+  todaysConsultations,
+  monthlyConsultations,
+  todaysFollowUps,
+  averageCallDuration,
+}
 
 class DashboardPage extends StatefulWidget {
   const DashboardPage({super.key});
@@ -27,6 +35,8 @@ class _DashboardPageState extends State<DashboardPage>
   String _userName = 'CHO';
   int _selectedTabIndex = 0;
   bool _isSearchActionExpanded = false;
+  _DashboardMetricFilter _selectedMetricFilter =
+      _DashboardMetricFilter.todaysConsultations;
 
   @override
   void initState() {
@@ -83,16 +93,144 @@ class _DashboardPageState extends State<DashboardPage>
   List<Appointment> get _activeAppointments =>
       _selectedTabIndex == 0 ? _myAppointments : _allAppointments;
 
-  int get _totalCount => _activeAppointments.length;
-  int get _pendingCount => _activeAppointments.where((a) => a.isPending).length;
-  int get _completedCount =>
-      _activeAppointments.where((a) => a.isCompleted).length;
-  int get _cancelledCount =>
-      _activeAppointments.where((a) => a.isCancelled).length;
+  List<Appointment> get _choAppointments {
+    if (_myAppointments.isNotEmpty) return _myAppointments;
+    return _activeAppointments;
+  }
+
+  int get _todayConsultationsCount {
+    final today = DateTime.now();
+    return _choAppointments.where((appointment) {
+      final date = _appointmentDateOrCreatedAt(appointment);
+      return date != null && _isSameDate(date, today);
+    }).length;
+  }
+
+  int get _monthlyConsultationsCount {
+    final now = DateTime.now();
+    return _choAppointments.where((appointment) {
+      final date = _appointmentDateOrCreatedAt(appointment);
+      return date != null && date.year == now.year && date.month == now.month;
+    }).length;
+  }
+
+  int get _todayFollowUpsCount {
+    final today = DateTime.now();
+    return _choAppointments.where((appointment) {
+      final date = _appointmentDateOrCreatedAt(appointment);
+      if (date == null || !_isSameDate(date, today)) return false;
+
+      final appointmentType = (appointment.appointmentType ?? '').toLowerCase();
+      final reason = (appointment.reason ?? '').toLowerCase();
+      final notes = (appointment.notes ?? '').toLowerCase();
+      final haystack = '$appointmentType $reason $notes';
+      return haystack.contains('follow');
+    }).length;
+  }
+
+  String get _averageCallDurationLabel {
+    final durations = _choAppointments
+        .map(_extractDurationMinutes)
+        .whereType<int>()
+        .where((duration) => duration > 0)
+        .toList();
+
+    if (durations.isEmpty) return '0m';
+
+    final average =
+        durations.reduce((sum, duration) => sum + duration) / durations.length;
+    final rounded = average.round();
+    return '${rounded}m';
+  }
+
+  List<Appointment> _applyMetricFilter(List<Appointment> appointments) {
+    switch (_selectedMetricFilter) {
+      case _DashboardMetricFilter.todaysConsultations:
+        final today = DateTime.now();
+        return appointments.where((appointment) {
+          final date = _appointmentDateOrCreatedAt(appointment);
+          return date != null && _isSameDate(date, today);
+        }).toList();
+      case _DashboardMetricFilter.monthlyConsultations:
+        final now = DateTime.now();
+        return appointments.where((appointment) {
+          final date = _appointmentDateOrCreatedAt(appointment);
+          return date != null && date.year == now.year && date.month == now.month;
+        }).toList();
+      case _DashboardMetricFilter.todaysFollowUps:
+        final today = DateTime.now();
+        return appointments.where((appointment) {
+          final date = _appointmentDateOrCreatedAt(appointment);
+          if (date == null || !_isSameDate(date, today)) return false;
+
+          final appointmentType = (appointment.appointmentType ?? '').toLowerCase();
+          final reason = (appointment.reason ?? '').toLowerCase();
+          final notes = (appointment.notes ?? '').toLowerCase();
+          final haystack = '$appointmentType $reason $notes';
+          return haystack.contains('follow');
+        }).toList();
+      case _DashboardMetricFilter.averageCallDuration:
+        return appointments
+            .where((appointment) => (_extractDurationMinutes(appointment) ?? 0) > 0)
+            .toList();
+    }
+  }
+
+  List<Appointment> get _filteredMyAppointments => _applyMetricFilter(_myAppointments);
 
   List<Appointment> get _searchableAppointments {
     if (_allAppointments.isNotEmpty) return _allAppointments;
     return _myAppointments;
+  }
+
+  DateTime? _appointmentDateOrCreatedAt(Appointment appointment) {
+    final rawDate = appointment.appointmentDate ?? appointment.createdAt;
+    if (rawDate == null || rawDate.isEmpty) return null;
+    try {
+      return DateTime.parse(rawDate);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  bool _isSameDate(DateTime first, DateTime second) {
+    return first.year == second.year &&
+        first.month == second.month &&
+        first.day == second.day;
+  }
+
+  int? _extractDurationMinutes(Appointment appointment) {
+    final raw = appointment.rawData;
+    if (raw == null) return null;
+
+    final candidates = [
+      raw['call_duration'],
+      raw['callDuration'],
+      raw['duration'],
+      raw['duration_minutes'],
+      raw['durationMinutes'],
+      raw['consultation_duration'],
+      raw['consultationDuration'],
+      raw['minutes'],
+      raw['call_minutes'],
+      raw['callMinutes'],
+    ];
+
+    for (final value in candidates) {
+      final parsed = _parseDurationValue(value);
+      if (parsed != null) return parsed;
+    }
+
+    return null;
+  }
+
+  int? _parseDurationValue(dynamic value) {
+    if (value == null) return null;
+    if (value is int) return value;
+    if (value is double) return value.round();
+
+    final match = RegExp(r'\d+').firstMatch(value.toString());
+    return match == null ? null : int.tryParse(match.group(0)!);
   }
 
   Future<void> _handleLogout() async {
@@ -167,6 +305,27 @@ class _DashboardPageState extends State<DashboardPage>
     );
   }
 
+  Future<void> _openAverageCallDurationPage() async {
+    await Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => AverageCallDurationPage(
+          appointments: _choAppointments,
+          userName: _userName,
+        ),
+      ),
+    );
+  }
+
+  void _handleMetricSelection(_DashboardMetricFilter filter) {
+    if (filter == _DashboardMetricFilter.averageCallDuration) {
+      _openAverageCallDurationPage();
+      return;
+    }
+
+    setState(() => _selectedMetricFilter = filter);
+  }
+
   Future<void> _openAppointmentSearchPage() async {
     if (_isSearchActionExpanded) return;
 
@@ -211,10 +370,12 @@ class _DashboardPageState extends State<DashboardPage>
                 _DashboardHeader(
                   userName: _userName,
                   greeting: _greeting(),
-                  totalCount: _totalCount,
-                  pendingCount: _pendingCount,
-                  completedCount: _completedCount,
-                  cancelledCount: _cancelledCount,
+                  todaysConsultations: _todayConsultationsCount,
+                  monthlyConsultations: _monthlyConsultationsCount,
+                  todaysFollowUps: _todayFollowUpsCount,
+                  averageCallDuration: _averageCallDurationLabel,
+                  selectedFilter: _selectedMetricFilter,
+                  onMetricSelected: _handleMetricSelection,
                   isCompact: isCompact,
                   onLogout: _handleLogout,
                 ),
@@ -253,7 +414,7 @@ class _DashboardPageState extends State<DashboardPage>
                 ),
                 _DashboardTabs(
                   controller: _tabController,
-                  myCount: _myAppointments.length,
+                  myCount: _filteredMyAppointments.length,
                   allCount: _allAppointments.length,
                   isCompact: isCompact,
                 ),
@@ -264,7 +425,7 @@ class _DashboardPageState extends State<DashboardPage>
                           controller: _tabController,
                           children: [
                             _AppointmentList(
-                              appointments: _myAppointments,
+                              appointments: _filteredMyAppointments,
                               onRefresh: _loadData,
                             ),
                             _AppointmentList(
@@ -305,20 +466,24 @@ class _DashboardHeader extends StatelessWidget {
   const _DashboardHeader({
     required this.userName,
     required this.greeting,
-    required this.totalCount,
-    required this.pendingCount,
-    required this.completedCount,
-    required this.cancelledCount,
+    required this.todaysConsultations,
+    required this.monthlyConsultations,
+    required this.todaysFollowUps,
+    required this.averageCallDuration,
+    required this.selectedFilter,
+    required this.onMetricSelected,
     required this.isCompact,
     required this.onLogout,
   });
 
   final String userName;
   final String greeting;
-  final int totalCount;
-  final int pendingCount;
-  final int completedCount;
-  final int cancelledCount;
+  final int todaysConsultations;
+  final int monthlyConsultations;
+  final int todaysFollowUps;
+  final String averageCallDuration;
+  final _DashboardMetricFilter selectedFilter;
+  final ValueChanged<_DashboardMetricFilter> onMetricSelected;
   final bool isCompact;
   final VoidCallback onLogout;
 
@@ -375,63 +540,101 @@ class _DashboardHeader extends StatelessWidget {
                 ),
               ),
               const SizedBox(width: 12),
-              InkWell(
-                onTap: onLogout,
-                borderRadius: BorderRadius.circular(16),
-                child: Ink(
-                  padding: EdgeInsets.all(isCompact ? 9 : 11),
-                  decoration: BoxDecoration(
-                    color: Colors.white.withValues(alpha: 0.18),
-                    borderRadius: BorderRadius.circular(16),
-                    border:
-                        Border.all(color: Colors.white.withValues(alpha: 0.15)),
-                  ),
-                  child: const Icon(
-                    Icons.logout_rounded,
-                    color: Colors.white,
-                    size: 18,
+              Material(
+                color: Colors.transparent,
+                child: InkWell(
+                  onTap: onLogout,
+                  customBorder: const CircleBorder(),
+                  child: Ink(
+                    width: isCompact ? 40 : 44,
+                    height: isCompact ? 40 : 44,
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      color: Colors.white.withValues(alpha: 0.2),
+                      border: Border.all(
+                        color: Colors.white.withValues(alpha: 0.22),
+                      ),
+                      boxShadow: [
+                        BoxShadow(
+                          color: Colors.black.withValues(alpha: 0.08),
+                          blurRadius: 12,
+                          offset: const Offset(0, 4),
+                        ),
+                      ],
+                    ),
+                    child: const Center(
+                      child: Icon(
+                        Icons.logout_rounded,
+                        color: Colors.white,
+                        size: 18,
+                      ),
+                    ),
                   ),
                 ),
               ),
             ],
           ),
           SizedBox(height: isCompact ? 10 : 14),
-          Row(
+          Column(
             children: [
-              Expanded(
-                child: _MetricCard(
-                  label: 'Total',
-                  value: totalCount,
-                  icon: Icons.calendar_month_rounded,
-                  isCompact: isCompact,
-                ),
+              Row(
+                children: [
+                  Expanded(
+                    child: _MetricCard(
+                      filter: _DashboardMetricFilter.todaysConsultations,
+                      label: "Today's Consultations",
+                      value: '$todaysConsultations',
+                      icon: Icons.insights_rounded,
+                      isSelected:
+                          selectedFilter == _DashboardMetricFilter.todaysConsultations,
+                      onTap: onMetricSelected,
+                      isCompact: isCompact,
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: _MetricCard(
+                      filter: _DashboardMetricFilter.monthlyConsultations,
+                      label: 'Monthly Consultations',
+                      value: '$monthlyConsultations',
+                      icon: Icons.medical_services_rounded,
+                      isSelected:
+                          selectedFilter == _DashboardMetricFilter.monthlyConsultations,
+                      onTap: onMetricSelected,
+                      isCompact: isCompact,
+                    ),
+                  ),
+                ],
               ),
-              const SizedBox(width: 8),
-              Expanded(
-                child: _MetricCard(
-                  label: 'Pending',
-                  value: pendingCount,
-                  icon: Icons.pending_actions_rounded,
-                  isCompact: isCompact,
-                ),
-              ),
-              const SizedBox(width: 8),
-              Expanded(
-                child: _MetricCard(
-                  label: 'Done',
-                  value: completedCount,
-                  icon: Icons.task_alt_rounded,
-                  isCompact: isCompact,
-                ),
-              ),
-              const SizedBox(width: 8),
-              Expanded(
-                child: _MetricCard(
-                  label: 'Cancel',
-                  value: cancelledCount,
-                  icon: Icons.event_busy_rounded,
-                  isCompact: isCompact,
-                ),
+              const SizedBox(height: 8),
+              Row(
+                children: [
+                  Expanded(
+                    child: _MetricCard(
+                      filter: _DashboardMetricFilter.todaysFollowUps,
+                      label: "Today's Follow-ups",
+                      value: '$todaysFollowUps',
+                      icon: Icons.event_available_rounded,
+                      isSelected:
+                          selectedFilter == _DashboardMetricFilter.todaysFollowUps,
+                      onTap: onMetricSelected,
+                      isCompact: isCompact,
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: _MetricCard(
+                      filter: _DashboardMetricFilter.averageCallDuration,
+                      label: 'Average Call Duration',
+                      value: averageCallDuration,
+                      icon: Icons.schedule_rounded,
+                      isSelected:
+                          selectedFilter == _DashboardMetricFilter.averageCallDuration,
+                      onTap: onMetricSelected,
+                      isCompact: isCompact,
+                    ),
+                  ),
+                ],
               ),
             ],
           ),
@@ -443,52 +646,97 @@ class _DashboardHeader extends StatelessWidget {
 
 class _MetricCard extends StatelessWidget {
   const _MetricCard({
+    required this.filter,
     required this.label,
     required this.value,
     required this.icon,
+    required this.isSelected,
+    required this.onTap,
     required this.isCompact,
   });
 
+  final _DashboardMetricFilter filter;
   final String label;
-  final int value;
+  final String value;
   final IconData icon;
+  final bool isSelected;
+  final ValueChanged<_DashboardMetricFilter> onTap;
   final bool isCompact;
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      padding: EdgeInsets.symmetric(
-        vertical: isCompact ? 8 : 12,
-        horizontal: isCompact ? 6 : 8,
-      ),
-      decoration: BoxDecoration(
-        color: Colors.white.withValues(alpha: 0.13),
-        borderRadius: BorderRadius.circular(16),
-      ),
-      child: Column(
-        children: [
-          if (!isCompact) ...[
-            Icon(icon, size: 18, color: Colors.white),
-            const SizedBox(height: 8),
-          ],
-          Text(
-            '$value',
-            style: GoogleFonts.poppins(
-              fontSize: isCompact ? 16 : 18,
-              fontWeight: FontWeight.w700,
-              color: Colors.white,
+    return SizedBox(
+      height: isCompact ? 68 : 74,
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          onTap: () => onTap(filter),
+          borderRadius: BorderRadius.circular(14),
+          child: Ink(
+            padding: EdgeInsets.symmetric(
+              vertical: isCompact ? 6 : 7,
+              horizontal: isCompact ? 5 : 6,
+            ),
+            decoration: BoxDecoration(
+              color: isSelected
+                  ? Colors.white.withValues(alpha: 0.24)
+                  : Colors.white.withValues(alpha: 0.13),
+              borderRadius: BorderRadius.circular(14),
+              border: isSelected
+                  ? Border.all(color: Colors.white.withValues(alpha: 0.45))
+                  : null,
+            ),
+            child: Center(
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.center,
+                children: [
+                  if (!isCompact) ...[
+                    Icon(
+                      icon,
+                      size: 14,
+                      color: isSelected
+                          ? Colors.white
+                          : Colors.white.withValues(alpha: 0.92),
+                    ),
+                    const SizedBox(height: 4),
+                  ],
+                  Flexible(
+                    child: FittedBox(
+                      fit: BoxFit.scaleDown,
+                      child: Text(
+                        value,
+                        style: GoogleFonts.poppins(
+                          fontSize: isCompact ? 13 : 15,
+                          fontWeight: FontWeight.w700,
+                          color: Colors.white,
+                        ),
+                      ),
+                    ),
+                  ),
+                  SizedBox(height: isCompact ? 1 : 2),
+                  Flexible(
+                    child: Text(
+                      label,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      textAlign: TextAlign.center,
+                      style: GoogleFonts.inter(
+                        fontSize: isCompact ? 7.8 : 8.4,
+                        color: Colors.white.withValues(
+                          alpha: isSelected ? 0.92 : 0.78,
+                        ),
+                        fontWeight: FontWeight.w600,
+                        height: 1.08,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
             ),
           ),
-          SizedBox(height: isCompact ? 1 : 2),
-          Text(
-            label,
-            style: GoogleFonts.inter(
-              fontSize: isCompact ? 9 : 10,
-              color: Colors.white.withValues(alpha: 0.78),
-              fontWeight: FontWeight.w500,
-            ),
-          ),
-        ],
+        ),
       ),
     );
   }
@@ -1230,6 +1478,11 @@ class _AppointmentSearchPage extends StatefulWidget {
 class _AppointmentSearchPageState extends State<_AppointmentSearchPage> {
   final TextEditingController _searchController = TextEditingController();
   String _query = '';
+  DateTime? _startDate;
+  DateTime? _endDate;
+  String? _selectedStatus;
+  int? _minDuration;
+  int? _maxDuration;
 
   @override
   void initState() {
@@ -1246,8 +1499,6 @@ class _AppointmentSearchPageState extends State<_AppointmentSearchPage> {
   }
 
   List<Appointment> get _filteredAppointments {
-    if (_query.isEmpty) return widget.appointments;
-
     return widget.appointments.where((appointment) {
       final haystack = [
         appointment.patientName,
@@ -1259,8 +1510,458 @@ class _AppointmentSearchPageState extends State<_AppointmentSearchPage> {
         appointment.notes,
       ].whereType<String>().join(' ').toLowerCase();
 
-      return haystack.contains(_query);
+      final matchesQuery = _query.isEmpty || haystack.contains(_query);
+      final matchesDate = _matchesDateRange(appointment);
+      final matchesStatus = _matchesStatus(appointment);
+      final matchesDuration = _matchesDuration(appointment);
+
+      return matchesQuery && matchesDate && matchesStatus && matchesDuration;
     }).toList();
+  }
+
+  bool get _hasActiveFilters =>
+      _startDate != null ||
+      _endDate != null ||
+      _selectedStatus != null ||
+      _minDuration != null ||
+      _maxDuration != null;
+
+  bool _matchesDateRange(Appointment appointment) {
+    if (_startDate == null && _endDate == null) return true;
+
+    final appointmentDate = _parseAppointmentDate(appointment);
+    if (appointmentDate == null) return false;
+
+    final dateOnly = DateTime(
+      appointmentDate.year,
+      appointmentDate.month,
+      appointmentDate.day,
+    );
+
+    if (_startDate != null) {
+      final start = DateTime(_startDate!.year, _startDate!.month, _startDate!.day);
+      if (dateOnly.isBefore(start)) return false;
+    }
+
+    if (_endDate != null) {
+      final end = DateTime(_endDate!.year, _endDate!.month, _endDate!.day);
+      if (dateOnly.isAfter(end)) return false;
+    }
+
+    return true;
+  }
+
+  bool _matchesStatus(Appointment appointment) {
+    if (_selectedStatus == null) return true;
+
+    final normalizedStatus = (appointment.status ?? '').trim().toLowerCase();
+
+    switch (_selectedStatus) {
+      case 'completed':
+        return appointment.isCompleted;
+      case 'incomplete':
+        return !appointment.isCompleted &&
+            !appointment.isCancelled &&
+            normalizedStatus != 'cancelled' &&
+            normalizedStatus != 'canceled';
+      case 'cancelled':
+        return appointment.isCancelled;
+      default:
+        return true;
+    }
+  }
+
+  bool _matchesDuration(Appointment appointment) {
+    if (_minDuration == null && _maxDuration == null) return true;
+
+    final duration = _extractDurationMinutes(appointment);
+    if (duration == null) return false;
+    if (_minDuration != null && duration < _minDuration!) return false;
+    if (_maxDuration != null && duration > _maxDuration!) return false;
+    return true;
+  }
+
+  DateTime? _parseAppointmentDate(Appointment appointment) {
+    final rawDate = appointment.appointmentDate ?? appointment.createdAt;
+    if (rawDate == null || rawDate.isEmpty) return null;
+    try {
+      return DateTime.parse(rawDate);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  int? _extractDurationMinutes(Appointment appointment) {
+    final raw = appointment.rawData;
+    if (raw == null) return null;
+
+    final candidates = [
+      raw['call_duration'],
+      raw['callDuration'],
+      raw['duration'],
+      raw['duration_minutes'],
+      raw['durationMinutes'],
+      raw['consultation_duration'],
+      raw['consultationDuration'],
+      raw['minutes'],
+      raw['call_minutes'],
+      raw['callMinutes'],
+    ];
+
+    for (final value in candidates) {
+      final parsed = _parseDurationValue(value);
+      if (parsed != null) return parsed;
+    }
+
+    return null;
+  }
+
+  int? _parseDurationValue(dynamic value) {
+    if (value == null) return null;
+    if (value is int) return value;
+    if (value is double) return value.round();
+
+    final match = RegExp(r'\d+').firstMatch(value.toString());
+    return match == null ? null : int.tryParse(match.group(0)!);
+  }
+
+  String _formatInputDate(DateTime? date) {
+    if (date == null) return 'dd / mm / yyyy';
+    return DateFormat('dd / MM / yyyy').format(date);
+  }
+
+  Future<void> _openFilterSheet() async {
+    DateTime? tempStartDate = _startDate;
+    DateTime? tempEndDate = _endDate;
+    String? tempStatus = _selectedStatus;
+    String tempMinDuration = _minDuration?.toString() ?? '';
+    String tempMaxDuration = _maxDuration?.toString() ?? '';
+
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (sheetContext) {
+        return StatefulBuilder(
+          builder: (context, setSheetState) {
+            Future<void> pickDate({
+              required bool isStart,
+            }) async {
+              final initialDate =
+                  (isStart ? tempStartDate : tempEndDate) ?? DateTime.now();
+              final picked = await showDatePicker(
+                context: sheetContext,
+                initialDate: initialDate,
+                firstDate: DateTime(2020),
+                lastDate: DateTime(2100),
+              );
+              if (picked == null) return;
+
+              setSheetState(() {
+                if (isStart) {
+                  tempStartDate = picked;
+                  if (tempEndDate != null && tempEndDate!.isBefore(picked)) {
+                    tempEndDate = picked;
+                  }
+                } else {
+                  tempEndDate = picked;
+                  if (tempStartDate != null &&
+                      tempStartDate!.isAfter(picked)) {
+                    tempStartDate = picked;
+                  }
+                }
+              });
+            }
+
+            Widget dateField({
+              required DateTime? value,
+              required VoidCallback onTap,
+            }) {
+              final hasValue = value != null;
+              return Expanded(
+                child: InkWell(
+                  onTap: onTap,
+                  borderRadius: BorderRadius.circular(14),
+                  child: Container(
+                    height: 50,
+                    padding: const EdgeInsets.symmetric(horizontal: 13),
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      borderRadius: BorderRadius.circular(14),
+                      border: Border.all(color: const Color(0xFFD9DEE3)),
+                    ),
+                    child: Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            _formatInputDate(value),
+                            style: GoogleFonts.inter(
+                              fontSize: 12.2,
+                              fontWeight: hasValue ? FontWeight.w600 : FontWeight.w500,
+                              color: hasValue
+                                  ? AppColors.textPrimary
+                                  : AppColors.textHint,
+                            ),
+                          ),
+                        ),
+                        const Icon(
+                          Icons.calendar_today_outlined,
+                          size: 16,
+                          color: AppColors.textSecondary,
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              );
+            }
+
+            Widget durationField({
+              required String initialValue,
+              required String hintText,
+              required ValueChanged<String> onChanged,
+            }) {
+              return Expanded(
+                child: Container(
+                  height: 50,
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    borderRadius: BorderRadius.circular(14),
+                    border: Border.all(color: const Color(0xFFD9DEE3)),
+                  ),
+                  child: TextFormField(
+                    key: ValueKey('$hintText-$initialValue'),
+                    initialValue: initialValue,
+                    onChanged: onChanged,
+                    keyboardType: TextInputType.number,
+                    decoration: InputDecoration(
+                      hintText: hintText,
+                      hintStyle: GoogleFonts.inter(
+                        fontSize: 12.2,
+                        color: AppColors.textHint,
+                      ),
+                      border: InputBorder.none,
+                      contentPadding: const EdgeInsets.symmetric(
+                        horizontal: 13,
+                        vertical: 14,
+                      ),
+                    ),
+                    style: GoogleFonts.inter(
+                      fontSize: 12.2,
+                      fontWeight: FontWeight.w600,
+                      color: AppColors.textPrimary,
+                    ),
+                  ),
+                ),
+              );
+            }
+
+            return SafeArea(
+              top: false,
+              child: Padding(
+                padding: EdgeInsets.fromLTRB(
+                  16,
+                  16,
+                  16,
+                  MediaQuery.of(sheetContext).viewInsets.bottom + 10,
+                ),
+                child: Container(
+                  padding: const EdgeInsets.fromLTRB(16, 16, 16, 16),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFFDFEFE),
+                    borderRadius: BorderRadius.circular(22),
+                    border: Border.all(color: AppColors.primary, width: 1.6),
+                  ),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'Date Range',
+                        style: GoogleFonts.poppins(
+                          fontSize: 13.5,
+                          fontWeight: FontWeight.w700,
+                          color: AppColors.textPrimary,
+                        ),
+                      ),
+                      const SizedBox(height: 10),
+                      Row(
+                        children: [
+                          dateField(
+                            value: tempStartDate,
+                            onTap: () => pickDate(isStart: true),
+                          ),
+                          const SizedBox(width: 10),
+                          dateField(
+                            value: tempEndDate,
+                            onTap: () => pickDate(isStart: false),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 18),
+                      Text(
+                        'Status',
+                        style: GoogleFonts.poppins(
+                          fontSize: 13.5,
+                          fontWeight: FontWeight.w700,
+                          color: AppColors.textPrimary,
+                        ),
+                      ),
+                      const SizedBox(height: 10),
+                      Wrap(
+                        spacing: 8,
+                        runSpacing: 8,
+                        children: [
+                          ('completed', 'completed'),
+                          ('incomplete', 'incomplete'),
+                          ('cancelled', 'cancelled'),
+                        ].map((entry) {
+                          final isSelected = tempStatus == entry.$1;
+                          return ChoiceChip(
+                            label: Text(
+                              entry.$2,
+                              style: GoogleFonts.inter(
+                                fontSize: 11.6,
+                                fontWeight: FontWeight.w600,
+                                color: isSelected
+                                    ? Colors.white
+                                    : AppColors.textPrimary,
+                              ),
+                            ),
+                            selected: isSelected,
+                            onSelected: (_) {
+                              setSheetState(() {
+                                tempStatus =
+                                    isSelected ? null : entry.$1;
+                              });
+                            },
+                            showCheckmark: false,
+                            backgroundColor: Colors.white,
+                            selectedColor: AppColors.primary,
+                            side: BorderSide(
+                              color: isSelected
+                                  ? AppColors.primary
+                                  : const Color(0xFFD9DEE3),
+                            ),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(999),
+                            ),
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 10,
+                              vertical: 8,
+                            ),
+                          );
+                        }).toList(),
+                      ),
+                      const SizedBox(height: 18),
+                      Text(
+                        'Call Duration (minutes)',
+                        style: GoogleFonts.poppins(
+                          fontSize: 13.5,
+                          fontWeight: FontWeight.w700,
+                          color: AppColors.textPrimary,
+                        ),
+                      ),
+                      const SizedBox(height: 10),
+                      Row(
+                        children: [
+                          durationField(
+                            initialValue: tempMinDuration,
+                            hintText: '0',
+                            onChanged: (value) => tempMinDuration = value,
+                          ),
+                          const SizedBox(width: 10),
+                          durationField(
+                            initialValue: tempMaxDuration,
+                            hintText: 'Max',
+                            onChanged: (value) => tempMaxDuration = value,
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 18),
+                      Divider(
+                        height: 1,
+                        color: Colors.grey.shade200,
+                      ),
+                      const SizedBox(height: 14),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: OutlinedButton(
+                              onPressed: () {
+                                setSheetState(() {
+                                  tempStartDate = null;
+                                  tempEndDate = null;
+                                  tempStatus = null;
+                                  tempMinDuration = '';
+                                  tempMaxDuration = '';
+                                });
+                              },
+                              style: OutlinedButton.styleFrom(
+                                minimumSize: const Size.fromHeight(44),
+                                side: const BorderSide(
+                                  color: Color(0xFFD9DEE3),
+                                ),
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(12),
+                                ),
+                              ),
+                              child: Text(
+                                'Clear All',
+                                style: GoogleFonts.inter(
+                                  fontSize: 12.5,
+                                  fontWeight: FontWeight.w700,
+                                  color: AppColors.textSecondary,
+                                ),
+                              ),
+                            ),
+                          ),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: ElevatedButton(
+                              onPressed: () {
+                                setState(() {
+                                  _startDate = tempStartDate;
+                                  _endDate = tempEndDate;
+                                  _selectedStatus = tempStatus;
+                                  _minDuration = int.tryParse(
+                                    tempMinDuration.trim(),
+                                  );
+                                  _maxDuration = int.tryParse(
+                                    tempMaxDuration.trim(),
+                                  );
+                                });
+                                Navigator.pop(sheetContext);
+                              },
+                              style: ElevatedButton.styleFrom(
+                                minimumSize: const Size.fromHeight(44),
+                                backgroundColor: AppColors.primary,
+                                foregroundColor: Colors.white,
+                                elevation: 0,
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(12),
+                                ),
+                              ),
+                              child: Text(
+                                'Apply Filters',
+                                style: GoogleFonts.inter(
+                                  fontSize: 12.5,
+                                  fontWeight: FontWeight.w700,
+                                ),
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            );
+          },
+        );
+      },
+    );
   }
 
   @override
@@ -1334,9 +2035,76 @@ class _AppointmentSearchPageState extends State<_AppointmentSearchPage> {
                       ),
                     ),
                   ),
+                  const SizedBox(width: 10),
+                  Stack(
+                    clipBehavior: Clip.none,
+                    children: [
+                      IconButton(
+                        onPressed: _openFilterSheet,
+                        constraints:
+                            const BoxConstraints(minWidth: 44, minHeight: 44),
+                        padding: const EdgeInsets.all(10),
+                        style: IconButton.styleFrom(
+                          backgroundColor: Colors.white,
+                          foregroundColor: AppColors.textPrimary,
+                          side: BorderSide(
+                            color: _hasActiveFilters
+                                ? AppColors.primary
+                                : AppColors.cardBorder,
+                          ),
+                        ),
+                        icon: Icon(
+                          Icons.tune_rounded,
+                          size: 20,
+                          color: _hasActiveFilters
+                              ? AppColors.primary
+                              : AppColors.textPrimary,
+                        ),
+                      ),
+                      if (_hasActiveFilters)
+                        Positioned(
+                          top: -2,
+                          right: -1,
+                          child: Container(
+                            width: 10,
+                            height: 10,
+                            decoration: const BoxDecoration(
+                              color: AppColors.primary,
+                              shape: BoxShape.circle,
+                            ),
+                          ),
+                        ),
+                    ],
+                  ),
                 ],
               ),
             ),
+            if (_hasActiveFilters)
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 0, 16, 10),
+                child: SingleChildScrollView(
+                  scrollDirection: Axis.horizontal,
+                  child: Row(
+                    children: [
+                      if (_startDate != null || _endDate != null)
+                        _SearchFilterTag(
+                          label:
+                              '${_formatInputDate(_startDate)} - ${_formatInputDate(_endDate)}',
+                        ),
+                      if (_selectedStatus != null)
+                        _SearchFilterTag(
+                          label:
+                              'Status: ${_selectedStatus![0].toUpperCase()}${_selectedStatus!.substring(1)}',
+                        ),
+                      if (_minDuration != null || _maxDuration != null)
+                        _SearchFilterTag(
+                          label:
+                              'Duration: ${_minDuration ?? 0}-${_maxDuration ?? 'Max'} min',
+                        ),
+                    ],
+                  ),
+                ),
+              ),
             Expanded(
               child: _filteredAppointments.isEmpty
                   ? Center(
@@ -1360,6 +2128,32 @@ class _AppointmentSearchPageState extends State<_AppointmentSearchPage> {
                     ),
             ),
           ],
+        ),
+      ),
+    );
+  }
+}
+
+class _SearchFilterTag extends StatelessWidget {
+  const _SearchFilterTag({required this.label});
+
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      margin: const EdgeInsets.only(right: 8),
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+      decoration: BoxDecoration(
+        color: AppColors.primary.withValues(alpha: 0.1),
+        borderRadius: BorderRadius.circular(999),
+      ),
+      child: Text(
+        label,
+        style: GoogleFonts.inter(
+          fontSize: 11.5,
+          fontWeight: FontWeight.w600,
+          color: AppColors.primaryDeep,
         ),
       ),
     );
