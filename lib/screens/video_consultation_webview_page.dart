@@ -123,8 +123,11 @@ class _VideoConsultationWebViewPageState
   /// via REST.  Doctor typically saves the prescription within 30–60 s of
   /// starting the call.  We poll aggressively (every 15 s, starting at 10 s)
   /// so the CHO sees the PDF as soon as possible.
+  bool _teleBackFallbackOpened = false;
+
   void _startPrescriptionPollTimer() {
     var attempts = 0;
+    var consecutiveFailures = 0;
     const maxAttempts = 20; // up to 5 minutes of polling (20 × 15 s)
     _prescriptionPollTimer =
         Timer.periodic(const Duration(seconds: 15), (t) async {
@@ -139,10 +142,26 @@ class _VideoConsultationWebViewPageState
       }
       debugPrint(
           '⏱️ PrescriptionPoll: attempt $attempts/$maxAttempts — fetching via API...');
+      final beforeFound = _prescriptionFound;
       try {
         await _fetchAndShowPrescription(widget.appointmentId.toString());
       } catch (e) {
         debugPrint('⚠️ PrescriptionPoll error: $e');
+      }
+
+      // Track consecutive failures — if prescription wasn't found this round
+      if (!_prescriptionFound && _prescriptionFound == beforeFound) {
+        consecutiveFailures++;
+      } else {
+        consecutiveFailures = 0;
+      }
+
+      // After 3 consecutive failures, auto-open /tele_back/ as fallback
+      // This page uses its own internal API to fetch prescription data
+      if (consecutiveFailures >= 3 && !_teleBackFallbackOpened && !_prescriptionFound && mounted) {
+        _teleBackFallbackOpened = true;
+        debugPrint('📋 PrescriptionPoll: 3 failures → auto-opening /tele_back/ fallback');
+        _openPrescriptionDirectly();
       }
     });
   }
@@ -1851,7 +1870,53 @@ class _VideoConsultationWebViewPageState
       }
     }
 
-    // ── FALLBACK 5: Try ABHA-based PDF URL directly ─────────────────────
+    // ── FALLBACK 5: Try /master/api/prescription/filter ─────────────────
+    // This is a DIFFERENT API path than /appointment/ — may work when
+    // appointment API is down.  Returns prescription data including PDF links.
+    if (!_prescriptionFound) {
+      final abhaId = widget.patientAbhaId ?? '';
+      final patId = widget.patientId;
+      // Try with ABHA ID first, then patient ID
+      for (final queryId in [abhaId, patId.toString()]) {
+        if (queryId.isEmpty || queryId == '0') continue;
+        final filterUrl =
+            'https://dhanvantari.net.in/master/api/prescription/filter?patientId=$queryId&page=1&limit=5';
+        debugPrint('📋 PrescriptionPoll: trying master/prescription/filter → patientId=$queryId');
+        final filterResp = await authGet(filterUrl);
+        if (filterResp['statusCode'] == 200 && filterResp['body'] != null) {
+          try {
+            final filterData = jsonDecode(filterResp['body']!);
+            final List items = filterData is List
+                ? filterData
+                : (filterData['data'] is List ? filterData['data'] : []);
+            if (items.isNotEmpty) {
+              // Look for a pres_link or pdf_url in any item
+              for (final item in items) {
+                if (item is! Map) continue;
+                final link = (item['pres_link'] ?? item['presLink'] ??
+                    item['pdf_url'] ?? item['pdfUrl'] ??
+                    item['prescription_url'] ?? '').toString().trim();
+                if (link.isNotEmpty) {
+                  final fullLink = link.startsWith('http') ? link : 'https://dhanvantari.net.in$link';
+                  debugPrint('📋 PrescriptionPoll: ✅ PDF found via master/prescription/filter → $fullLink');
+                  _prescriptionFound = true;
+                  if (mounted) _openPdfOverlay(fullLink, fileName: 'prescription.pdf');
+                  return;
+                }
+              }
+              // No PDF link but has prescription data — try constructing URL from ABHA + today
+              if (abhaId.isNotEmpty) {
+                debugPrint('📋 PrescriptionPoll: prescription data found but no PDF link, will try ABHA directory');
+              }
+            }
+          } catch (e) {
+            debugPrint('📋 PrescriptionPoll: master/prescription/filter parse error: $e');
+          }
+        }
+      }
+    }
+
+    // ── FALLBACK 6: Try ABHA-based PDF URL directly ─────────────────────
     // Pattern: /prescription_api/getpdf/{abhaId}/{timestamp}.pdf
     // If the ABHA directory returns an HTML page with PDF links, extract them.
     final abhaId = widget.patientAbhaId ?? '';
